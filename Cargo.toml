@@ -1,0 +1,9 @@
+[package]
+name = "hearth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.53", features = ["derive"] }
+gix = "0.76.0"
