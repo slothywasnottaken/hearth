@@ -1,8 +1,10 @@
 #![allow(unused)]
 
-use std::{fmt::Display, io::Write, process::id};
+use std::{fmt::Display, io::Write};
 
 use tracing::{info, instrument};
+
+use crate::tokenizer::{Token, Tokenizer, TypeID};
 
 #[derive(Debug)]
 pub struct Parser<'a> {
@@ -13,11 +15,6 @@ pub struct Parser<'a> {
 impl<'a> Parser<'a> {
     pub fn new(data: &'a str) -> Self {
         Self { data, ast: vec![] }
-    }
-
-    #[instrument(skip(self))]
-    fn push(&mut self, node: AstNode<'a>) {
-        self.ast.push(node);
     }
 
     #[instrument(skip_all)]
@@ -38,13 +35,13 @@ impl<'a> Parser<'a> {
                     let Some((name, var)) = Parser::parse_var(&tokenizer.tokens[idx..]) else {
                         panic!()
                     };
-                    self.push(AstNode::Variable((name, var)));
+                    self.ast.push(AstNode::Variable((name, var)));
                 }
                 Token::Struct => {
                     let Some((name, var)) = Parser::parse_struct(&tokenizer.tokens[idx..]) else {
                         panic!()
                     };
-                    self.push(AstNode::StructType((name, var)));
+                    self.ast.push(AstNode::StructType((name, var)));
                 }
                 _ => {}
             };
@@ -162,6 +159,7 @@ impl<'a> Parser<'a> {
         let mut state = StructState::Ident;
         let mut struct_var = StructVar::default();
         for token in tokens {
+            info!(?token);
             match state {
                 StructState::Ident => match token {
                     Token::Str(s) => match (name, ident) {
@@ -194,7 +192,8 @@ impl<'a> Parser<'a> {
                         ident = None;
                     }
                     Token::Comma => state = StructState::Ident,
-                    Token::RightAngleBracket => return Some((name.unwrap(), struct_var)),
+                    Token::Semicolon => return Some((name.unwrap(), struct_var)),
+                    Token::RightAngleBracket => {}
                     _ => {}
                 },
             }
@@ -231,29 +230,27 @@ impl<'a> Parser<'a> {
                     _ => panic!("{token:?}"),
                 },
                 StructState::Ident => match token {
-                    Token::Colon => {}
                     Token::Number(_) => todo!(),
                     Token::WhiteSpace => continue,
                     Token::Str(s) => {
                         if field_name.is_none() {
                             field_name = Some(s);
                         } else {
-                            field_val = Some(TypeID::from(*s));
+                            field_val = Some(TypeID::String);
                         }
                     }
+                    // Token::Semicolon => todo!(),
+                    // Token::LeftAngleBracket => todo!(),
                     Token::RightAngleBracket => {
-                        match (field_name, field_val) {
-                            (Some(ident), Some(val)) => {
-                                struct_type.fields.push((ident.to_string(), val));
-                                return Some((name.unwrap(), struct_type));
-                            }
-
-                            _ => {
-                                return Some((name.unwrap(), struct_type));
-                            }
+                        if let (Some(name), Some(val)) = (field_name, field_val) {
+                            struct_type.fields.push((name.to_string(), val));
                         };
+                        return Some((name.unwrap(), struct_type));
                     }
+                    // Token::Struct => todo!(),
+                    // Token::Colon => todo!(),
                     Token::Comma => {
+                        tracing::trace!(?field_name, ?field_val);
                         struct_type
                             .fields
                             .push((field_name.unwrap().to_string(), field_val.unwrap()));
@@ -265,554 +262,11 @@ impl<'a> Parser<'a> {
                     _ => {}
                 },
             }
+            tracing::trace!(?token);
         }
 
-        None
+        Some((name.unwrap(), struct_type))
     }
-}
-
-#[derive(Debug)]
-pub struct Tokenizer<'a> {
-    data: &'a str,
-    tokens: Vec<Token<'a>>,
-}
-
-#[derive(Debug)]
-pub enum TokenizerState {
-    Searching,
-    Variable,
-    StructDecl,
-}
-
-impl<'a> Tokenizer<'a> {
-    pub fn new(data: &'a str) -> Self {
-        Self {
-            data,
-            tokens: vec![],
-        }
-    }
-
-    #[instrument(skip_all)]
-    pub fn push(&mut self, token: Token<'a>) {
-        tracing::trace!(?token);
-        self.tokens.push(token);
-    }
-
-    #[instrument(skip(self))]
-    pub fn tokenize(mut self) -> Self {
-        let mut word = None;
-
-        let mut state = TokenizerState::Searching;
-        let src = &self.data;
-        info!(?src);
-
-        let mut chs = src.trim().chars();
-        let mut i = 0;
-
-        let mut need_space = false;
-
-        loop {
-            let Some(c) = chs.next() else {
-                break;
-            };
-            if i >= self.data.trim().len() {
-                break;
-            }
-            match state {
-                TokenizerState::Searching => {
-                    i += 1;
-                    match c {
-                        'a'..='z' | 'A'..='Z' => {
-                            if word.is_none() {
-                                word = Some(i);
-                            }
-                        }
-                        ' ' => {
-                            if need_space {
-                                self.push(Token::WhiteSpace);
-                                need_space = false;
-                            }
-                            if let Some(s) = word {
-                                let w = self.data[s..i].trim();
-                                info!(?w);
-                                match w {
-                                    "let" => {
-                                        self.push(Token::Let);
-                                        state = TokenizerState::Variable;
-                                        word = None;
-                                        need_space = true;
-                                    }
-                                    "struct" => {
-                                        self.push(Token::Struct);
-                                        state = TokenizerState::StructDecl;
-                                        word = None;
-                                        need_space = true;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-
-                        _ => {}
-                    }
-                }
-                // found let
-                TokenizerState::Variable => {
-                    info!("tokenizing variable");
-                    let res = self.variable_state_machine(i);
-                    info!(?res);
-                    i += res;
-                    state = TokenizerState::Searching;
-                }
-                TokenizerState::StructDecl => {
-                    info!("tokenizing struct");
-                    let res = self.struct_state_machine(i);
-                    info!(?res);
-                    info!("{:?}", self.data[i..i + res].trim());
-                    i += res;
-                    state = TokenizerState::Searching;
-                    info!("finished tokenizing struct");
-                }
-            }
-        }
-
-        self
-    }
-
-    #[instrument(skip(self))]
-    fn variable_state_machine(&mut self, idx: usize) -> usize {
-        #[derive(Debug)]
-        enum VariableState {
-            VarIdent,
-            Equal,
-            VarValue,
-            Semicolon,
-            Number,
-            Str,
-            Struct,
-        }
-
-        #[derive(Debug)]
-        enum Ident {
-            Str(usize),
-            Number(usize),
-        }
-
-        let mut state = VariableState::VarIdent;
-
-        let mut ident = None;
-
-        let mut quote = None;
-        info!("tokenizing var");
-        info!("src {:?}", self.data[idx..].trim());
-        let mut found_space = false;
-
-        for (i, ch) in self.data[idx..].chars().enumerate() {
-            tracing::trace!(?state);
-            match state {
-                VariableState::VarIdent => match ch {
-                    '=' => {
-                        state = VariableState::Equal;
-                    }
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(Ident::Str(i));
-                        }
-                    }
-                    ' ' => {
-                        if !found_space {
-                            self.push(Token::WhiteSpace);
-                            found_space = true;
-                        }
-                    }
-                    _ => {}
-                },
-                VariableState::Equal => {
-                    if let Some(iden) = ident {
-                        match iden {
-                            Ident::Str(id) => {
-                                self.push(Token::Str(
-                                    self.data[idx + id..idx + i.saturating_sub(1)].trim(),
-                                ));
-                            }
-                            Ident::Number(id) => self.push(Token::Number(
-                                self.data[idx + id..idx + i.saturating_sub(1)].trim(),
-                            )),
-                        }
-                        self.push(Token::Equal);
-                        state = VariableState::VarValue;
-                        ident = None;
-                    }
-                }
-                VariableState::Semicolon => {
-                    self.push(Token::Semicolon);
-
-                    return i;
-                }
-                VariableState::VarValue => match ch {
-                    'a'..='z' | 'A'..='Z' => {
-                        ident = Some(Ident::Str(i));
-                        state = VariableState::Str;
-                    }
-                    '0'..='9' => {
-                        ident = Some(Ident::Number(i));
-                        state = VariableState::Number;
-                    }
-                    _ => {}
-                },
-                VariableState::Number => match ch {
-                    ' ' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => panic!("incorrect ident type"),
-
-                                Ident::Number(id) => self.push(Token::Number(
-                                    self.data[idx + id..idx + i.saturating_sub(1)].trim(),
-                                )),
-                            }
-
-                            ident = None;
-                        }
-                    }
-                    ';' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => panic!("incorrect ident type"),
-
-                                Ident::Number(id) => {
-                                    self.push(Token::Number(self.data[idx + id..idx + i].trim()))
-                                }
-                            }
-
-                            ident = None;
-                        }
-                        state = VariableState::Semicolon;
-                    }
-
-                    'a'..='z' | 'A'..='Z' => {
-                        panic!("expected number found string");
-                    }
-
-                    '0'..='9' => continue,
-
-                    c => panic!("found {c}"),
-                },
-
-                VariableState::Str => match ch {
-                    ' ' => {
-                        if let Some(iden) = ident {
-                            info!(?iden);
-                            match iden {
-                                Ident::Str(id) => {
-                                    self.push(Token::Str(self.data[idx + id..idx + i].trim()))
-                                }
-
-                                Ident::Number(id) => panic!("incorrect ident type"),
-                            }
-
-                            ident = None;
-                        }
-                    }
-                    ';' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => self.push(Token::Str(
-                                    self.data[idx + id..idx + i.saturating_sub(1)].trim(),
-                                )),
-
-                                Ident::Number(id) => panic!("incorrect ident type"),
-                            }
-
-                            ident = None;
-                        }
-                        state = VariableState::Semicolon;
-                    }
-
-                    '"' => match quote {
-                        None => quote = Some(i),
-                        Some(ix) => {
-                            let val = self.data[idx + ix..idx + i.saturating_sub(1)].trim();
-                            info!(?val);
-                            self.push(Token::Str(val));
-                            ident = None;
-                        }
-                    },
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(Ident::Str(i));
-                        }
-                        continue;
-                    }
-                    '0'..='9' => {
-                        panic!(
-                            "trying to tokenize string: number or number in a string is unsupported"
-                        );
-                    }
-                    '{' => {
-                        state = VariableState::Struct;
-                        self.push(Token::LeftAngleBracket);
-                    }
-                    '\n' => continue,
-                    _ => panic!("found ch: {ch:?}"),
-                },
-
-                VariableState::Struct => {
-                    let mut found_eq = false;
-                    match ch {
-                        'a'..='z' | 'A'..='Z' => {
-                            if ident.is_none() {
-                                ident = Some(Ident::Str(i));
-                            }
-                            continue;
-                        }
-                        '0'..='9' => {
-                            if ident.is_none() {
-                                ident = Some(Ident::Number(i));
-                            }
-                        }
-                        ' ' | '\n' => {
-                            if ch == ' ' && !found_space {
-                                self.push(Token::WhiteSpace);
-                                found_space = true;
-                            }
-
-                            if let Some(ref iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(self.data[idx + id..idx + i].trim()));
-                                        ident = None;
-                                    }
-
-                                    Ident::Number(id) => {
-                                        self.push(Token::Number(
-                                            self.data[idx + id..idx + i].trim(),
-                                        ));
-                                        ident = None;
-                                    }
-                                }
-                            }
-                        }
-
-                        ',' => {
-                            if let Some(ref iden) = ident {
-                                found_eq = true;
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(self.data[idx + id..idx + i].trim()));
-                                        ident = None;
-                                    }
-
-                                    Ident::Number(id) => {
-                                        self.push(Token::Number(
-                                            self.data[idx + id..idx + i].trim(),
-                                        ));
-                                        ident = None;
-                                    }
-                                }
-                            }
-                            self.push(Token::Comma);
-                        }
-                        /* for if the struct is let <ident> = Foo {
-                         * urmom: 0
-                         * } */
-                        '}' => {
-                            if let Some(ref iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(
-                                            self.data[idx + id..idx + i + 1].trim(),
-                                        ));
-                                        ident = None;
-                                    }
-
-                                    Ident::Number(id) => {
-                                        self.push(Token::Number(
-                                            self.data[idx + id..idx + i].trim(),
-                                        ));
-                                        ident = None;
-                                    }
-                                }
-                            }
-                            self.push(Token::RightAngleBracket);
-                        }
-
-                        '=' => {
-                            if let Some(ref iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(self.data[idx + id..idx + i].trim()))
-                                    }
-
-                                    Ident::Number(_) => panic!(),
-                                }
-                            }
-                            self.push(Token::Equal);
-                            ident = None;
-                        }
-                        ';' => {
-                            self.push(Token::Semicolon);
-                            return i;
-                        }
-
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        0
-    }
-
-    #[instrument(skip(self))]
-    fn struct_state_machine(&mut self, idx: usize) -> usize {
-        #[derive(Debug, Clone, Copy, PartialEq)]
-        enum StructState {
-            Name,
-            LeftBracket,
-            VarIdent,
-            Colon,
-        }
-
-        let mut state = StructState::Name;
-
-        let mut ident = None;
-
-        info!("src {:?}", self.data[idx..].trim());
-
-        let mut found_space = false;
-
-        for (i, ch) in self.data[idx..].chars().enumerate() {
-            tracing::trace!(?state);
-            match state {
-                StructState::Name => match ch {
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(i);
-                        }
-                    }
-                    ' ' | '\n' => {
-                        if ch == ' ' && !found_space {
-                            self.push(Token::WhiteSpace);
-                            found_space = true;
-                        }
-                        if let Some(iden) = ident {
-                            let var = self.data[idx + iden..idx + i].trim();
-                            self.push(Token::Str(var));
-                            state = StructState::LeftBracket;
-                            ident = None;
-                            found_space = false;
-                        }
-                    }
-                    c => panic!("{c:?}"),
-                },
-                StructState::LeftBracket => match ch {
-                    '{' => {
-                        if let Some(iden) = ident {
-                            self.push(Token::Str(&self.data[idx + iden..idx + i]));
-                        }
-
-                        self.push(Token::LeftAngleBracket);
-                        state = StructState::VarIdent;
-                    }
-                    ' ' | '\n' => continue,
-                    c => panic!("{c:?}"),
-                },
-                StructState::VarIdent => match ch {
-                    ':' => {
-                        match ident {
-                            Some(iden) => {
-                                let var = self.data[idx + iden..idx + i].trim();
-                                self.push(Token::Str(var));
-                                ident = None;
-                            }
-                            None => {
-                                panic!("expect <name>:");
-                            }
-                        }
-                        self.push(Token::Colon);
-                        state = StructState::Colon;
-                    }
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(i);
-                        }
-                    }
-                    ' ' => {
-                        if !found_space {
-                            self.push(Token::WhiteSpace);
-                            found_space = true;
-                        }
-                    }
-                    _ => {}
-                },
-                StructState::Colon => match ch {
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(i);
-                        }
-                    }
-                    ',' => match ident {
-                        Some(iden) => {
-                            self.push(Token::Str(self.data[idx + iden..idx + i].trim()));
-                            self.push(Token::Comma);
-                            ident = None;
-                        }
-                        None => {
-                            continue;
-                        }
-                    },
-                    '}' => {
-                        info!(?ident);
-                        if let Some(iden) = ident {
-                            self.push(Token::Str(self.data[idx + iden..idx + i].trim()));
-                            ident = None;
-                        }
-                        self.push(Token::RightAngleBracket);
-                        return i + 1;
-                    }
-
-                    _ => {}
-                },
-            }
-        }
-
-        0
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Token<'a> {
-    Let,
-    Equal,
-    Number(&'a str),
-    WhiteSpace,
-    Str(&'a str),
-    Semicolon,
-    LeftAngleBracket,
-    RightAngleBracket,
-    Struct,
-    Colon,
-    Comma,
-    TypeID(TypeID),
-}
-
-impl Display for Token<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
-#[derive(Debug)]
-pub enum Declaration {
-    Variable,
-    Struct,
-}
-
-#[derive(Debug)]
-pub enum Builtin {
-    Link,
-    Move,
-    Exec,
 }
 
 #[derive(Debug, Clone)]
@@ -829,6 +283,33 @@ pub enum Variable<'a> {
 
     String(&'a str),
     Struct(StructVar<'a>),
+    Array(Array<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Array<'a> {
+    typ: TypeID,
+    fields: Vec<Variable<'a>>,
+}
+
+impl<'a> Array<'a> {
+    pub fn new(typ: TypeID) -> Self {
+        Self {
+            typ,
+            fields: vec![],
+        }
+    }
+
+    pub fn push(&mut self, var: Variable<'a>) {
+        match self.typ == var.id() {
+            true => self.fields.push(var),
+            false => panic!(
+                "attempted to push variable with incorrect type expected: {:?} found {:?}",
+                self.typ,
+                var.id()
+            ),
+        }
+    }
 }
 
 impl Variable<'_> {
@@ -844,43 +325,7 @@ impl Variable<'_> {
             Variable::U64(_) => TypeID::U64,
             Variable::String(_) => TypeID::String,
             Variable::Struct(_) => TypeID::Unknown,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum TypeID {
-    I8,
-    I16,
-    I32,
-    I64,
-
-    U8,
-    U16,
-    U32,
-    U64,
-
-    String,
-    /// for structs (? idkkkkkkk)
-    Unknown,
-}
-
-impl From<&str> for TypeID {
-    fn from(value: &str) -> Self {
-        match value {
-            "i8" => TypeID::I8,
-            "i16" => TypeID::I16,
-            "i32" => TypeID::I32,
-            "i64" => TypeID::I64,
-
-            "u8" => TypeID::U8,
-            "u16" => TypeID::U16,
-            "U32" => TypeID::U32,
-            "u64" => TypeID::U64,
-
-            "String" => TypeID::String,
-
-            _ => TypeID::Unknown,
+            Variable::Array(_) => TypeID::Array,
         }
     }
 }
@@ -891,6 +336,7 @@ pub struct StructType {
 }
 
 /// could be represented as a slice of type ids?
+
 #[derive(Debug, Default, Clone)]
 pub struct StructVar<'a> {
     fields: Vec<(&'a str, Variable<'a>)>,
@@ -904,7 +350,6 @@ impl<'a> StructVar<'a> {
 
 #[derive(Debug)]
 pub enum AstNode<'a> {
-    Builtin(Builtin),
     Variable((&'a str, Variable<'a>)),
     StructType((&'a str, StructType)),
 }
@@ -968,12 +413,12 @@ mod test {
         let _guard = tracing::subscriber::set_default(tracing_subscriber::FmtSubscriber::new());
 
         let src = r#"
-        struct Bar {
-        baz: i32,
+        struct Foo {
+        bar: i32,
         }
         
-        let foo = Bar {
-            baz = 0,
+        let bar = Foo {
+            bar = 0,
         };
         "#;
 
@@ -993,19 +438,19 @@ mod test {
             rep.as_slice(),
             [
                 Token::Struct,
-                Token::Str("Bar"),
+                Token::Str("Foo"),
                 Token::LeftAngleBracket,
-                Token::Str("baz"),
+                Token::Str("bar"),
                 Token::Colon,
                 Token::Str("i32"),
                 Token::Comma,
                 Token::RightAngleBracket,
                 Token::Let,
-                Token::Str("foo"),
+                Token::Str("bar"),
                 Token::Equal,
-                Token::Str("Bar"),
+                Token::Str("Foo"),
                 Token::LeftAngleBracket,
-                Token::Str("baz"),
+                Token::Str("bar"),
                 Token::Equal,
                 Token::Number("0"),
                 Token::Comma,
