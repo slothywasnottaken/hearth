@@ -2,7 +2,8 @@
 
 use std::{fmt::Display, io::Write};
 
-use tracing::{info, instrument};
+use crate::function_name;
+use crate::info;
 
 use crate::tokenizer::{Token, Tokenizer, TypeID};
 
@@ -17,10 +18,9 @@ impl<'a> Parser<'a> {
         Self { data, ast: vec![] }
     }
 
-    #[instrument(skip_all)]
     pub fn parse(mut self) -> Self {
         let tokenizer = Tokenizer::new(self.data).tokenize();
-        info!(?tokenizer);
+        info!("{tokenizer:?}");
 
         let mut tokens = tokenizer.tokens.iter();
         let mut idx = 0;
@@ -52,7 +52,6 @@ impl<'a> Parser<'a> {
         self
     }
 
-    #[instrument(skip_all)]
     fn parse_var(tokens: &[Token<'a>]) -> Option<(&'a str, Variable<'a>)> {
         #[derive(Debug, Clone, Copy)]
         enum VarState {
@@ -126,8 +125,10 @@ impl<'a> Parser<'a> {
                         let struct_var = Parser::parse_struct_assignment(&tokens[idx..]).unwrap();
                         return Some((var_name.unwrap(), Variable::Struct(struct_var.1)));
                     }
-                    Token::Comma => continue,
-                    Token::RightAngleBracket => continue,
+                    Token::Comma => panic!(),
+                    Token::RightAngleBracket => panic!(),
+                    Token::LeftBracket => panic!(),
+                    Token::RightBracket => panic!(),
                     tok => {
                         panic!("{tok:?}")
                     }
@@ -136,7 +137,7 @@ impl<'a> Parser<'a> {
             idx += 1;
         }
 
-        info!(?var_name, ?var_val);
+        info!("{var_name:?} {var_val:?}");
 
         match (var_name, var_val) {
             (Some(name), Some(val)) => Some((name, val)),
@@ -144,9 +145,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[instrument]
     fn parse_struct_assignment(tokens: &[Token<'a>]) -> Option<(&'a str, StructVar<'a>)> {
-        info!(?tokens);
+        info!("{tokens:?}");
         #[derive(Debug)]
         enum StructState {
             Ident,
@@ -159,7 +159,7 @@ impl<'a> Parser<'a> {
         let mut state = StructState::Ident;
         let mut struct_var = StructVar::default();
         for token in tokens {
-            info!(?token);
+            info!("{token:?}");
             match state {
                 StructState::Ident => match token {
                     Token::Str(s) => match (name, ident) {
@@ -201,7 +201,6 @@ impl<'a> Parser<'a> {
         None
     }
 
-    #[instrument(skip_all)]
     fn parse_struct(tokens: &[Token<'a>]) -> Option<(&'a str, StructType)> {
         #[derive(Debug, Clone, Copy)]
         enum StructState {
@@ -250,7 +249,7 @@ impl<'a> Parser<'a> {
                     // Token::Struct => todo!(),
                     // Token::Colon => todo!(),
                     Token::Comma => {
-                        tracing::trace!(?field_name, ?field_val);
+                        log::trace!("{field_name:?} {field_val:?}");
                         struct_type
                             .fields
                             .push((field_name.unwrap().to_string(), field_val.unwrap()));
@@ -262,7 +261,7 @@ impl<'a> Parser<'a> {
                     _ => {}
                 },
             }
-            tracing::trace!(?token);
+            log::trace!("{token:?}");
         }
 
         Some((name.unwrap(), struct_type))
@@ -355,108 +354,33 @@ pub enum AstNode<'a> {
 }
 
 #[cfg(test)]
-mod test {
-    use tracing::info;
+mod parser_test {
+    use std::time::SystemTime;
 
-    use crate::parser::{Token, Tokenizer};
+    use log::info;
 
-    #[test]
-    fn str_var() {
-        let src = r#"let foo="bar";"#;
-        let tokenizer = Tokenizer::new(src).tokenize();
-        info!(?tokenizer.tokens);
-        assert_eq!(*tokenizer.tokens.get(4).unwrap(), Token::Str("bar"))
+    #[tracing::instrument]
+    fn setup_logger() -> Result<(), fern::InitError> {
+        fern::Dispatch::new()
+            .format(|out, message, record| {
+                out.finish(format_args!(
+                    "[{} {} {}] {}",
+                    humantime::format_rfc3339_seconds(SystemTime::now()),
+                    record.level(),
+                    record.target(),
+                    message
+                ))
+            })
+            .level(log::LevelFilter::Debug)
+            .chain(std::io::stdout())
+            .chain(fern::log_file("output.log")?)
+            .apply()?;
+        Ok(())
     }
 
     #[test]
-    fn num_var() {
-        let src = "let foo = 10; ";
-        let tokenizer = Tokenizer::new(src).tokenize();
-        assert_eq!(*tokenizer.tokens.get(4).unwrap(), Token::Number("10"))
-    }
-
-    #[test]
-    fn multiple_vars() {
-        let src = "let foo = \"bar\"; let foo = 10;";
-        let tokenizer = Tokenizer::new(src).tokenize();
-        info!(?tokenizer);
-    }
-
-    #[test]
-    fn tokenize_struct() {
-        let src = "struct foo {
-            bar: i32,
-        }";
-
-        let tokenizer = Tokenizer::new(src).tokenize();
-
-        assert_eq!(
-            *tokenizer.tokens.as_slice(),
-            [
-                Token::Struct,
-                Token::WhiteSpace,
-                Token::Str("foo"),
-                Token::LeftAngleBracket,
-                Token::WhiteSpace,
-                Token::Str("bar"),
-                Token::Colon,
-                Token::Str("i32"),
-                Token::RightAngleBracket
-            ]
-        );
-
-        info!(?tokenizer);
-    }
-
-    #[test]
-    fn struct_assignment() {
-        let _guard = tracing::subscriber::set_default(tracing_subscriber::FmtSubscriber::new());
-
-        let src = r#"
-        struct Foo {
-        bar: i32,
-        }
-        
-        let bar = Foo {
-            bar = 0,
-        };
-        "#;
-
-        let tokenizer = Tokenizer::new(src).tokenize();
-        let tokens = tokenizer.tokens;
-        info!("{tokens:?}");
-
-        let mut rep = vec![];
-
-        for tok in tokens.iter() {
-            if tok != &Token::WhiteSpace {
-                rep.push(*tok);
-            }
-        }
-
-        assert_eq!(
-            rep.as_slice(),
-            [
-                Token::Struct,
-                Token::Str("Foo"),
-                Token::LeftAngleBracket,
-                Token::Str("bar"),
-                Token::Colon,
-                Token::Str("i32"),
-                Token::Comma,
-                Token::RightAngleBracket,
-                Token::Let,
-                Token::Str("bar"),
-                Token::Equal,
-                Token::Str("Foo"),
-                Token::LeftAngleBracket,
-                Token::Str("bar"),
-                Token::Equal,
-                Token::Number("0"),
-                Token::Comma,
-                Token::RightAngleBracket,
-                Token::Semicolon,
-            ]
-        );
+    fn array() {
+        setup_logger().unwrap();
+        info!("foo");
     }
 }

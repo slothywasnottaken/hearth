@@ -1,6 +1,25 @@
 use std::fmt::Display;
 
-use tracing::{info, instrument};
+#[macro_export]
+macro_rules! function_name {
+    () => {{
+        // Okay, this is ugly, I get it. However, this is the best we can get on a stable rust.
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+        // `3` is the length of the `::f`.
+        &name[..name.len() - 3]
+    }};
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        log::info!("[{}] {}", function_name!(), format_args!($($arg)*));
+    };
+}
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
@@ -90,23 +109,44 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    #[instrument(skip_all)]
     pub fn push(&mut self, token: Token<'a>) {
-        tracing::trace!(?token);
+        if token == Token::WhiteSpace {
+            info!("adding white space");
+        }
+        log::trace!("{token:?}");
         self.tokens.push(token);
     }
 
-    #[instrument(skip(self))]
+    fn next_word(source: &str) -> Option<(usize, &str)> {
+        let mut word_start = None;
+        for (i, ch) in source.trim().chars().enumerate() {
+            match ch {
+                ' ' | '\n' => {
+                    if let Some(start) = word_start {
+                        info!("next_word {}", &source[start..i]);
+                        return Some((i, &source[start..i]));
+                    }
+                }
+                'a'..='z' | 'A'..='Z' => {
+                    if word_start.is_none() {
+                        word_start = Some(i);
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        None
+    }
+
     pub fn tokenize(mut self) -> Self {
         let mut word = None;
 
         self.data = self.data.trim();
-        tracing::trace!(?self.data);
+        log::trace!("{:?}", self.data);
 
         let mut chs = self.data.chars();
         let mut i = 0;
-
-        let mut need_space = false;
 
         loop {
             let Some(c) = chs.next() else {
@@ -114,6 +154,41 @@ impl<'a> Tokenizer<'a> {
             };
             if i >= self.data.trim().len() {
                 break;
+            }
+            if let Some((inc, wrd)) = Tokenizer::next_word(&self.data[i..]) {
+                info!("word: {wrd:?}");
+                match wrd {
+                    "let" => {
+                        self.push(Token::Let);
+
+                        info!("tokenizing variable");
+                        let res = self.variable_state_machine(inc);
+                        log::trace!("{res:?}");
+                        i += res;
+                    }
+                    "struct" => {
+                        self.push(Token::Struct);
+
+                        info!("tokenizing struct");
+                        let res = self.struct_state_machine(inc);
+
+                        info!("{res:?}");
+                        info!("{:?}", self.data[i..i + res].trim());
+                        info!("{:?}", self.data[i + res..].trim());
+                        i += res;
+                        info!("finished tokenizing struct");
+                    }
+                    "fn" => {
+                        self.push(Token::Function);
+                    }
+                    "if" => {
+                        self.push(Token::If);
+                    }
+                    "else" => {
+                        self.push(Token::Else);
+                    }
+                    _ => {}
+                }
             }
             match c {
                 'a'..='z' | 'A'..='Z' => {
@@ -123,69 +198,68 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 ' ' => {
-                    if let Some(idx) = word {
-                        tracing::trace!("found word {:?}", &self.data[idx..i].trim());
-                    }
-                    if need_space {
-                        self.push(Token::WhiteSpace);
-                        need_space = false;
-                    }
-                    if let Some(s) = word {
-                        let w = self.data[s..i].trim();
-                        let mut idx = None;
-                        for (y, c) in w.chars().enumerate() {
-                            if c == ' ' {
-                                idx = Some(y)
-                            }
-                        }
-                        let wrd = match idx {
-                            Some(id) => self.data[s..s + id].trim(),
-                            None => self.data[s..i].trim(),
-                        };
-                        info!(?wrd);
-                        match wrd {
-                            "let" => {
-                                self.push(Token::Let);
-                                word = None;
-                                need_space = true;
-
-                                info!("tokenizing variable");
-                                let res = match idx {
-                                    Some(id) => self.variable_state_machine(s + id),
-                                    None => self.variable_state_machine(i),
-                                };
-                                tracing::trace!(?res);
-                                i += res;
-                            }
-                            "struct" => {
-                                self.push(Token::Struct);
-                                word = None;
-                                need_space = true;
-
-                                info!("tokenizing struct");
-                                let res = match idx {
-                                    Some(id) => self.struct_state_machine(s + id),
-                                    None => self.struct_state_machine(i),
-                                };
-
-                                info!(?res);
-                                info!("{:?}", self.data[i..i + res].trim());
-                                info!("{:?}", self.data[i + res..].trim());
-                                i += res;
-                                info!("finished tokenizing struct");
-                            }
-                            "fn" => {
-                                self.push(Token::Function);
-                            }
-                            "if" => {
-                                self.push(Token::If);
-                            }
-                            "else" => {
-                                self.push(Token::Else);
-                            }
-                            _ => {}
-                        }
-                    }
+                    // if let Some(idx) = word {
+                    //     log::trace!("found word {:?}", &self.data[idx..i].trim());
+                    // }
+                    // if need_space {
+                    //     self.push(Token::WhiteSpace);
+                    //     need_space = false;
+                    // }
+                    // if let Some(s) = word {
+                    //     let w = self.data[s..i].trim();
+                    //     let mut idx = None;
+                    //     for (y, c) in w.chars().enumerate() {
+                    //         if c == ' ' {
+                    //             idx = Some(y)
+                    //         }
+                    //     }
+                    //     let wrd = match idx {
+                    //         Some(id) => self.data[s..s + id].trim(),
+                    //         None => self.data[s..i].trim(),
+                    //     };
+                    //     info!("{wrd:?}");
+                    //     match wrd {
+                    //         "let" => {
+                    //             self.push(Token::Let);
+                    //
+                    //             info!("tokenizing variable");
+                    //             let res = match idx {
+                    //                 Some(id) => self.variable_state_machine(s + id),
+                    //                 None => self.variable_state_machine(i),
+                    //             };
+                    //             log::trace!("{res:?}");
+                    //             i += res;
+                    //             need_space = true;
+                    //         }
+                    //         "struct" => {
+                    //             self.push(Token::Struct);
+                    //
+                    //             info!("tokenizing struct");
+                    //             let res = match idx {
+                    //                 Some(id) => self.struct_state_machine(s + id),
+                    //                 None => self.struct_state_machine(i),
+                    //             };
+                    //
+                    //             info!("{res:?}");
+                    //             info!("{:?}", self.data[i..i + res].trim());
+                    //             info!("{:?}", self.data[i + res..].trim());
+                    //             i += res;
+                    //             info!("finished tokenizing struct");
+                    //             need_space = true;
+                    //         }
+                    //         "fn" => {
+                    //             self.push(Token::Function);
+                    //         }
+                    //         "if" => {
+                    //             self.push(Token::If);
+                    //         }
+                    //         "else" => {
+                    //             self.push(Token::Else);
+                    //         }
+                    //         _ => {}
+                    //     }
+                    //     word = None;
+                    // }
                 }
 
                 _ => {}
@@ -196,7 +270,6 @@ impl<'a> Tokenizer<'a> {
         self
     }
 
-    #[instrument(skip(self))]
     fn variable_state_machine(&mut self, idx: usize) -> usize {
         #[derive(Debug)]
         enum VariableState {
@@ -205,6 +278,8 @@ impl<'a> Tokenizer<'a> {
             Semicolon,
             Number,
             Str,
+            Array,
+            TypeID,
             Struct,
         }
 
@@ -219,13 +294,59 @@ impl<'a> Tokenizer<'a> {
         let mut ident: Option<Ident> = None;
 
         let mut quote: Option<usize> = None;
-        tracing::trace!("tokenizing var");
+        log::trace!("tokenizing var");
         info!("src {:?}", self.data[idx..].trim());
         let mut found_space = false;
 
         for (i, ch) in self.data[idx..].chars().enumerate() {
-            info!(?state, ?ch);
+            info!("{state:?} {ch:?}");
             match state {
+                VariableState::TypeID => match ch {
+                    '[' => {
+                        self.push(Token::LeftBracket);
+                        ident = Some(Ident::Str(i + 1));
+                    }
+                    ']' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(id) => {
+                                    self.push(Token::TypeID(TypeID::from(
+                                        &self.data[idx + id..idx + i],
+                                    )));
+                                    self.push(Token::RightBracket);
+                                    ident = None;
+
+                                    state = VariableState::VarValue;
+                                }
+                                Ident::Number(_) => panic!(),
+                            }
+                        }
+                    }
+                    'a'..='z' | 'A'..='Z' => {
+                        if ident.is_none() {
+                            ident = Some(Ident::Str(i.saturating_sub(1)));
+                        }
+                    }
+                    '0'..='9' => continue,
+                    '=' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(id) => {
+                                    self.push(Token::TypeID(TypeID::from(
+                                        &self.data[idx + id..idx + i],
+                                    )));
+                                }
+
+                                Ident::Number(_) => panic!(),
+                            }
+                            self.push(Token::Equal);
+                            state = VariableState::VarValue;
+                            ident = None;
+                        }
+                    }
+                    ' ' => continue,
+                    c => panic!("{c:?}"),
+                },
                 VariableState::VarIdent => match ch {
                     '=' => {
                         if let Some(iden) = ident {
@@ -234,16 +355,38 @@ impl<'a> Tokenizer<'a> {
                                     self.push(Token::Str(
                                         &self.data[idx + id..idx + i.saturating_sub(1)],
                                     ));
+                                    self.push(Token::Equal);
+                                    state = VariableState::VarValue;
                                 }
-                                Ident::Number(id) => self.push(Token::Number(
-                                    &self.data[idx + id..idx + i.saturating_sub(1)],
-                                )),
+                                Ident::Number(id) => match self.data.get(idx + id..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Number(s.trim()));
+                                        self.push(Token::Equal);
+                                        state = VariableState::VarValue;
+                                    }
+                                    None => panic!(),
+                                },
                             }
-                            self.push(Token::Equal);
-                            state = VariableState::VarValue;
-                            ident = None;
                         }
+                        ident = None;
                     }
+                    ':' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(id) => match self.data.get(idx + id..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Str(s.trim()));
+                                        self.push(Token::Colon);
+                                        state = VariableState::TypeID;
+                                    }
+                                    None => panic!(),
+                                },
+                                Ident::Number(_) => panic!(),
+                            }
+                        }
+                        ident = None;
+                    }
+
                     'a'..='z' | 'A'..='Z' => {
                         if ident.is_none() {
                             ident = Some(Ident::Str(i));
@@ -255,9 +398,28 @@ impl<'a> Tokenizer<'a> {
                             found_space = true;
                         }
                     }
-                    _ => {}
+                    ';' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(id) => match self.data.get(idx + id..idx + i) {
+                                    Some(s) => self.push(Token::Str(s)),
+                                    None => panic!(),
+                                },
+                                Ident::Number(_) => todo!(),
+                            }
+                        }
+                        ident = None;
+                    }
+                    c => panic!("{c:?}"),
                 },
                 VariableState::VarValue => match ch {
+                    ':' => {
+                        panic!();
+                    }
+                    '[' => {
+                        self.push(Token::LeftBracket);
+                        state = VariableState::Array
+                    }
                     'a'..='z' | 'A'..='Z' => {
                         ident = Some(Ident::Str(i));
                         state = VariableState::Str;
@@ -265,6 +427,9 @@ impl<'a> Tokenizer<'a> {
                     '0'..='9' => {
                         ident = Some(Ident::Number(i));
                         state = VariableState::Number;
+                    }
+                    '=' => {
+                        self.push(Token::Equal);
                     }
                     _ => {}
                 },
@@ -275,12 +440,14 @@ impl<'a> Tokenizer<'a> {
                             match iden {
                                 Ident::Str(_) => panic!("incorrect ident type"),
 
-                                Ident::Number(id) => self.push(Token::Number(
-                                    self.data[idx + id..idx + i.saturating_sub(1)].trim(),
-                                )),
+                                Ident::Number(id) => match self.data.get(idx + id..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Number(s.trim()));
+                                        ident = None;
+                                    }
+                                    None => panic!(),
+                                },
                             }
-
-                            ident = None;
                         }
                     }
                     ';' => {
@@ -288,14 +455,16 @@ impl<'a> Tokenizer<'a> {
                             match iden {
                                 Ident::Str(_) => panic!("incorrect ident type"),
 
-                                Ident::Number(id) => {
-                                    self.push(Token::Number(self.data[idx + id..idx + i].trim()))
-                                }
+                                Ident::Number(id) => match self.data.get(idx + id..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Number(s.trim()));
+                                        ident = None;
+                                        state = VariableState::Semicolon;
+                                    }
+                                    None => panic!(),
+                                },
                             }
-
-                            ident = None;
                         }
-                        state = VariableState::Semicolon;
                     }
 
                     'a'..='z' | 'A'..='Z' => {
@@ -311,24 +480,32 @@ impl<'a> Tokenizer<'a> {
                 VariableState::Str => match ch {
                     ' ' => {
                         if let Some(iden) = ident {
-                            info!(?iden);
+                            info!("{iden:?}");
                             match iden {
-                                Ident::Str(id) => {
-                                    self.push(Token::Str(self.data[idx + id..idx + i].trim()))
-                                }
+                                Ident::Str(id) => match self.data.get(idx + id..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Str(s.trim()));
+                                        ident = None;
+                                    }
+
+                                    None => panic!(),
+                                },
 
                                 Ident::Number(_) => panic!("incorrect ident type"),
                             }
-
-                            ident = None;
                         }
                     }
                     ';' => {
                         if let Some(iden) = ident {
                             match iden {
-                                Ident::Str(id) => self.push(Token::Str(
-                                    self.data[idx + id..idx + i.saturating_sub(1)].trim(),
-                                )),
+                                Ident::Str(id) => {
+                                    match self.data.get(idx + id..idx + i.saturating_sub(1)) {
+                                        Some(s) => {
+                                            self.push(Token::Str(s.trim()));
+                                        }
+                                        None => panic!(),
+                                    }
+                                }
 
                                 Ident::Number(_) => panic!("incorrect ident type"),
                             }
@@ -340,12 +517,14 @@ impl<'a> Tokenizer<'a> {
 
                     '"' => match quote {
                         None => quote = Some(i),
-                        Some(ix) => {
-                            let val = self.data[idx + ix..idx + i.saturating_sub(1)].trim();
-                            info!(?val);
-                            self.push(Token::Str(val));
-                            ident = None;
-                        }
+                        Some(ix) => match self.data.get(idx + ix..idx + i.saturating_sub(1)) {
+                            Some(s) => {
+                                info!("{s:?}");
+                                self.push(Token::Str(s.trim()));
+                                ident = None;
+                            }
+                            None => panic!(),
+                        },
                     },
                     'a'..='z' | 'A'..='Z' => {
                         if ident.is_none() {
@@ -364,6 +543,75 @@ impl<'a> Tokenizer<'a> {
                     }
                     '\n' => continue,
                     _ => panic!("found ch: {ch:?}"),
+                },
+
+                VariableState::Array => match ch {
+                    ']' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(_) => todo!(),
+                                Ident::Number(n) => match self.data.get(idx + n..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Number(s.trim()));
+                                    }
+                                    None => panic!(),
+                                },
+                            }
+                        }
+                        self.push(Token::RightBracket);
+                        ident = None;
+                    }
+                    ';' => {
+                        return i + 2;
+                    }
+                    ',' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(_) => todo!(),
+                                Ident::Number(n) => match self.data.get(idx + n..idx + i) {
+                                    Some(s) => {
+                                        self.push(Token::Number(s.trim()));
+                                    }
+
+                                    None => panic!("{}", &self.data[idx + n..idx + i]),
+                                },
+                            }
+                            self.push(Token::Comma);
+                            ident = None;
+                        }
+                    }
+                    ' ' => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Str(_) => todo!(),
+                                Ident::Number(n) => match self.data.get(idx + n..idx + 1) {
+                                    Some(s) => {
+                                        self.push(Token::Number(s.trim()));
+                                    }
+
+                                    None => panic!(),
+                                },
+                            }
+                        }
+                        ident = None;
+                    }
+                    '"' => match quote {
+                        None => quote = Some(i + 1),
+                        Some(id) => match self.data.get(idx + id..idx + i) {
+                            Some(s) => {
+                                self.push(Token::Str(s.trim()));
+                                quote = None;
+                            }
+
+                            None => panic!(),
+                        },
+                    },
+                    '0'..='9' => {
+                        if ident.is_none() {
+                            ident = Some(Ident::Number(i));
+                        }
+                    }
+                    _ => {}
                 },
 
                 VariableState::Struct => {
@@ -385,67 +633,64 @@ impl<'a> Tokenizer<'a> {
                                 found_space = true;
                             }
 
-                            if let Some(ref iden) = ident {
+                            if let Some(iden) = ident {
                                 match iden {
                                     Ident::Str(id) => {
                                         self.push(Token::Str(self.data[idx + id..idx + i].trim()));
-                                        ident = None;
                                     }
 
                                     Ident::Number(id) => {
                                         self.push(Token::Number(
                                             self.data[idx + id..idx + i].trim(),
                                         ));
-                                        ident = None;
                                     }
                                 }
                             }
+                            ident = None;
                         }
 
                         ',' => {
-                            if let Some(ref iden) = ident {
+                            if let Some(iden) = ident {
                                 match iden {
                                     Ident::Str(id) => {
                                         self.push(Token::Str(self.data[idx + id..idx + i].trim()));
-                                        ident = None;
                                     }
 
                                     Ident::Number(id) => {
                                         self.push(Token::Number(
                                             self.data[idx + id..idx + i].trim(),
                                         ));
-                                        ident = None;
                                     }
                                 }
                             }
+                            ident = None;
                             self.push(Token::Comma);
                         }
                         /* for if the struct is let <ident> = Foo {
                          * urmom: 0
                          * } */
                         '}' => {
-                            if let Some(ref iden) = ident {
+                            if let Some(iden) = ident {
                                 match iden {
                                     Ident::Str(id) => {
                                         self.push(Token::Str(
                                             self.data[idx + id..idx + i + 1].trim(),
                                         ));
-                                        ident = None;
                                     }
 
                                     Ident::Number(id) => {
                                         self.push(Token::Number(
                                             self.data[idx + id..idx + i].trim(),
                                         ));
-                                        ident = None;
                                     }
                                 }
                             }
                             self.push(Token::RightAngleBracket);
+                            ident = None;
                         }
 
                         '=' => {
-                            if let Some(ref iden) = ident {
+                            if let Some(iden) = ident {
                                 match iden {
                                     Ident::Str(id) => {
                                         self.push(Token::Str(self.data[idx + id..idx + i].trim()))
@@ -459,7 +704,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         ';' => {
                             self.push(Token::Semicolon);
-                            return i + 1;
+                            state = VariableState::Semicolon;
+                            continue;
                         }
 
                         _ => {}
@@ -477,7 +723,6 @@ impl<'a> Tokenizer<'a> {
         0
     }
 
-    #[instrument(skip(self))]
     fn struct_state_machine(&mut self, idx: usize) -> usize {
         #[derive(Debug, Clone, Copy, PartialEq)]
         enum StructState {
@@ -491,12 +736,12 @@ impl<'a> Tokenizer<'a> {
 
         let mut ident = None;
 
-        tracing::trace!("src {:?}", self.data[idx..].trim());
+        log::trace!("src {:?}", self.data[idx..].trim());
 
         let mut found_space = false;
 
         for (i, ch) in self.data[idx..].chars().enumerate() {
-            tracing::trace!(?state);
+            log::trace!("{state:?}");
             match state {
                 StructState::Name => match ch {
                     'a'..='z' | 'A'..='Z' => {
@@ -536,7 +781,7 @@ impl<'a> Tokenizer<'a> {
                         match ident {
                             Some(iden) => {
                                 let var = self.data[idx + iden..idx + i].trim();
-                                info!(?var);
+                                info!("{var:?}");
                                 self.push(Token::Str(var));
                                 ident = None;
                                 state = StructState::TypeID;
@@ -590,11 +835,160 @@ impl<'a> Tokenizer<'a> {
                             self.push(Token::RightAngleBracket);
                         }
                     }
+
                     _ => {}
                 },
             }
         }
 
         0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::SystemTime;
+
+    use crate::tokenizer::{Token, Tokenizer};
+
+    fn setup_logger() {
+        _ = fern::Dispatch::new()
+            .format(|out, message, record| {
+                out.finish(format_args!(
+                    "[{} {} {}] {}",
+                    humantime::format_rfc3339_seconds(SystemTime::now()),
+                    record.level(),
+                    record.target(),
+                    message
+                ))
+            })
+            .level(log::LevelFilter::Debug)
+            .chain(std::io::stdout())
+            .apply();
+    }
+
+    #[test]
+    fn str_var() {
+        setup_logger();
+        let src = r#"let foo="bar";"#;
+        let tokenizer = Tokenizer::new(src).tokenize();
+        info!("{:?}", tokenizer.tokens);
+        assert_eq!(*tokenizer.tokens.get(4).unwrap(), Token::Str("bar"))
+    }
+
+    #[test]
+    fn num_var() {
+        setup_logger();
+        let src = "let foo = 10; ";
+        let tokenizer = Tokenizer::new(src).tokenize();
+        info!("{:?}", tokenizer.tokens);
+        assert_eq!(*tokenizer.tokens.get(4).unwrap(), Token::Number("10"))
+    }
+
+    #[test]
+    fn multiple_vars() {
+        setup_logger();
+        let src = "let foo = \"bar\"; let foo = 10;";
+        let tokenizer = Tokenizer::new(src).tokenize();
+        info!("{tokenizer:?}");
+    }
+
+    #[test]
+    fn tokenize_struct() {
+        setup_logger();
+        let src = "struct foo {
+            bar: i32,
+        }";
+
+        let tokenizer = Tokenizer::new(src).tokenize();
+
+        assert_eq!(
+            *tokenizer.tokens.as_slice(),
+            [
+                Token::Struct,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::LeftAngleBracket,
+                Token::WhiteSpace,
+                Token::Str("bar"),
+                Token::Colon,
+                Token::Str("i32"),
+                Token::RightAngleBracket
+            ]
+        );
+
+        info!("{tokenizer:?}");
+    }
+
+    #[test]
+    fn struct_assignment() {
+        setup_logger();
+        let src = r#"
+        struct Foo {
+        bar: i32,
+        }
+        
+        let bar = Foo {
+            bar = 0,
+        };
+        "#;
+
+        let tokenizer = Tokenizer::new(src).tokenize();
+        let tokens = tokenizer.tokens;
+        info!("{tokens:?}");
+
+        let mut rep = vec![];
+
+        for tok in tokens.iter() {
+            if tok != &Token::WhiteSpace {
+                rep.push(*tok);
+            }
+        }
+
+        assert_eq!(
+            rep.as_slice(),
+            [
+                Token::Struct,
+                Token::Str("Foo"),
+                Token::LeftAngleBracket,
+                Token::Str("bar"),
+                Token::Colon,
+                Token::Str("i32"),
+                Token::Comma,
+                Token::RightAngleBracket,
+                Token::Let,
+                Token::Str("bar"),
+                Token::Equal,
+                Token::Str("Foo"),
+                Token::LeftAngleBracket,
+                Token::Str("bar"),
+                Token::Equal,
+                Token::Number("0"),
+                Token::Comma,
+                Token::RightAngleBracket,
+                Token::Semicolon,
+            ]
+        );
+    }
+
+    #[test]
+    fn array() {
+        setup_logger();
+        let src = r#"
+        let foo: [i32] = [1, 2, 3, "foo"];
+        let bar = foo;
+        "#;
+
+        let tokenizer = Tokenizer::new(src).tokenize();
+        let tokens = tokenizer.tokens;
+        info!("{tokens:?}");
+
+        let mut rep = vec![];
+
+        for tok in tokens.iter() {
+            if tok != &Token::WhiteSpace {
+                rep.push(*tok);
+            }
+        }
     }
 }
