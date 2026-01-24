@@ -879,3 +879,19 @@
 [2026-01-23T23:13:43Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::variable_state_machine] VarIdent ' '
 [2026-01-23T23:13:43Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::variable_state_machine] VarIdent ' '
 [2026-01-23T23:13:43Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::variable_state_machine] VarIdent '}'
+[2026-01-24T05:50:40Z INFO hearth::parser::parser_test] foo
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "let"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "foo:"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "[i32]"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "="
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "[1,"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "2,"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "3,"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "\"foo\"];"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "   "
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "   "
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "let"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "bar"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "="
+[2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "foo;"
+[2026-01-24T05:50:40Z INFO hearth::tokenizer::test] [hearth::tokenizer::test::array] []

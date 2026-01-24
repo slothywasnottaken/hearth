@@ -8,8 +8,6 @@ edition = "2024"
 [dependencies]
 log = "0.4"
 fern = "0.7"
-humantime = "2.3.0"
-tracing = "0.1.44"
 # gix = { version = "0.76.0", default-features = false }
 
 [profile.dev]

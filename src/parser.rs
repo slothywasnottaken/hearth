@@ -359,13 +359,11 @@ mod parser_test {
 
     use log::info;
 
-    #[tracing::instrument]
     fn setup_logger() -> Result<(), fern::InitError> {
         fern::Dispatch::new()
             .format(|out, message, record| {
                 out.finish(format_args!(
-                    "[{} {} {}] {}",
-                    humantime::format_rfc3339_seconds(SystemTime::now()),
+                    "[{} {}] {}",
                     record.level(),
                     record.target(),
                     message

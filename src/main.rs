@@ -1,6 +1,3 @@
-use log::{debug, error, info as inf, trace, warn};
-use std::time::SystemTime;
-
 use crate::parser::Parser;
 
 mod parser;
@@ -24,15 +21,14 @@ fn main() {
         "#;
     let parser = Parser::new(data).parse();
 
-    inf!("{parser:?}");
+    log::info!("{parser:?}");
 }
 
 fn setup_logger() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
-                "[{} {} {}] {}",
-                humantime::format_rfc3339_seconds(SystemTime::now()),
+                "[{} {}] {}",
                 record.level(),
                 record.target(),
                 message

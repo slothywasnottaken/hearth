@@ -6,7 +6,12 @@ macro_rules! function_name {
         // Okay, this is ugly, I get it. However, this is the best we can get on a stable rust.
         fn f() {}
         fn type_name_of<T>(_: T) -> &'static str {
-            std::any::type_name::<T>()
+            let name = std::any::type_name::<T>();
+            if let Some(stripped) = name.strip_prefix(module_path!()) {
+                // cursed way of skipping the following :: from module_path!
+                return &stripped[2..];
+            }
+            name
         }
         let name = type_name_of(f);
         // `3` is the length of the `::f`.
@@ -15,9 +20,37 @@ macro_rules! function_name {
 }
 
 #[macro_export]
+macro_rules! trace {
+    ($($arg:tt)*) => {
+        log::trace!("[{}] {}", function_name!(), format_args!($($arg)*));
+    };
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        log::debug!("[{}] {}", function_name!(), format_args!($($arg)*));
+    };
+}
+
+#[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
         log::info!("[{}] {}", function_name!(), format_args!($($arg)*));
+    };
+}
+
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {
+        log::warn!("[{}] {}", function_name!(), format_args!($($arg)*));
+    };
+}
+
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        log::warn!("[{}] {}", function_name!(), format_args!($($arg)*));
     };
 }
 
@@ -43,7 +76,9 @@ pub enum Token<'a> {
     Array,
     Number(&'a str),
     Str(&'a str),
+    QuotedString(&'a str),
     Float,
+    Enum,
 
     Function,
     Module,
@@ -96,6 +131,28 @@ impl From<&str> for TypeID {
 }
 
 #[derive(Debug)]
+enum Ident {
+    Word(usize),
+    Number(usize),
+}
+
+impl Ident {
+    fn into_str<'a>(self, s: &'a str, idx: usize) -> Token<'a> {
+        match self {
+            Ident::Word(w) => Token::Str(s[w..idx].trim()),
+            Ident::Number(w) => Token::Number(s[w..idx].trim()),
+        }
+    }
+
+    fn inner(&self) -> usize {
+        match self {
+            Ident::Word(n) => *n,
+            Ident::Number(n) => *n,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Tokenizer<'a> {
     pub(crate) data: &'a str,
     pub(crate) tokens: Vec<Token<'a>>,
@@ -113,756 +170,202 @@ impl<'a> Tokenizer<'a> {
         if token == Token::WhiteSpace {
             info!("adding white space");
         }
-        log::trace!("{token:?}");
+        trace!("{token:?}");
         self.tokens.push(token);
     }
 
-    fn next_word(source: &str) -> Option<(usize, &str)> {
-        let mut word_start = None;
-        for (i, ch) in source.trim().chars().enumerate() {
+    /// works as an iterator, the number it returns is an increment amount, you can give it a big
+    /// string and repeatedly call next() on it and just increment the start of your slice to get
+    /// the next word
+    fn next_token(source: &str) -> Option<(usize, Token<'_>, Option<Token<'_>>)> {
+        info!("src: {source:?}");
+
+        let mut ident: Option<Ident> = None;
+        let mut quoted = false;
+        for (i, ch) in source.char_indices() {
             match ch {
-                ' ' | '\n' => {
-                    if let Some(start) = word_start {
-                        info!("next_word {}", &source[start..i]);
-                        return Some((i, &source[start..i]));
+                'A'..='Z' | 'a'..='z' => {
+                    if ident.is_none() {
+                        ident = Some(Ident::Word(i));
                     }
                 }
-                'a'..='z' | 'A'..='Z' => {
-                    if word_start.is_none() {
-                        word_start = Some(i);
+                '0'..='9' => {
+                    if ident.is_none() {
+                        ident = Some(Ident::Number(i));
                     }
                 }
+                ':' => {
+                    if let Some(iden) = ident {
+                        return Some((i, iden.into_str(source, i), None));
+                    } else {
+                        return Some((i + 1, Token::Colon, None));
+                    }
+                }
+                ',' => {
+                    if let Some(iden) = ident {
+                        // i + 2 to skip over the string and then the comma
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Comma)));
+                    } else {
+                        return Some((i + 1, Token::Comma, None));
+                    }
+                }
+
+                ' ' => {
+                    if let Some(iden) = ident {
+                        debug!(
+                            "found {ch:?}: {:?}",
+                            (i, Token::Str(source[iden.inner()..i + 1].trim()),)
+                        );
+
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::WhiteSpace)));
+                    } else {
+                        return Some((i + 1, Token::WhiteSpace, None));
+                    }
+                }
+                '=' => {
+                    if let Some(iden) = ident {
+                        debug!("found {ch:?} {:?}", (i, source[iden.inner()..i].trim()));
+                    }
+                    return Some((i + 1, Token::Equal, None));
+                }
+                '[' => {
+                    if let Some(iden) = ident {
+                        debug!("found {ch:?} {:?}", (i, source[iden.inner()..i].trim()));
+                        return Some((i, iden.into_str(source, i), None));
+                    } else {
+                        return Some((i + 1, Token::LeftBracket, None));
+                    }
+                }
+                ']' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::RightBracket)));
+                    }
+                    return Some((i + 2, Token::RightBracket, None));
+                }
+                '{' => {
+                    if let Some(iden) = ident {
+                        return Some((
+                            i + 1,
+                            iden.into_str(source, i),
+                            Some(Token::LeftAngleBracket),
+                        ));
+                    }
+                    return Some((i + 2, Token::LeftAngleBracket, None));
+                }
+                '}' => {
+                    if let Some(iden) = ident {
+                        return Some((
+                            i + 1,
+                            iden.into_str(source, i),
+                            Some(Token::RightAngleBracket),
+                        ));
+                    }
+                    return Some((i + 2, Token::RightAngleBracket, None));
+                }
+
+                ';' => {
+                    if let Some(iden) = ident {
+                        debug!(
+                            "found {ch:?} {:?}",
+                            (
+                                i,
+                                Token::Str(source[iden.inner()..i.saturating_add(1)].trim()),
+                            )
+                        );
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Semicolon)));
+                    } else {
+                        return Some((i + 1, Token::Semicolon, None));
+                    }
+                }
+                '"' => match quoted {
+                    false => {
+                        quoted = true;
+                        ident = Some(Ident::Word(i));
+                    }
+                    true => {
+                        if let Some(iden) = ident {
+                            match iden {
+                                Ident::Word(w) => {
+                                    return Some((
+                                        i + 1,
+                                        Token::QuotedString(&source[w + 1..i]),
+                                        None,
+                                    ));
+                                }
+                                Ident::Number(_) => panic!(),
+                            }
+                        }
+                    }
+                },
+
                 _ => continue,
             }
+        }
+
+        if let Some(iden) = ident {
+            return Some((source.len(), iden.into_str(source, source.len()), None));
         }
 
         None
     }
 
     pub fn tokenize(mut self) -> Self {
-        let mut word = None;
+        debug!("{:?}", self.data);
 
-        self.data = self.data.trim();
-        log::trace!("{:?}", self.data);
-
-        let mut chs = self.data.chars();
         let mut i = 0;
+        let mut prev = Token::WhiteSpace;
 
         loop {
-            let Some(c) = chs.next() else {
-                break;
-            };
-            if i >= self.data.trim().len() {
+            if i >= self.data.len() {
                 break;
             }
-            if let Some((inc, wrd)) = Tokenizer::next_word(&self.data[i..]) {
-                info!("word: {wrd:?}");
-                match wrd {
-                    "let" => {
-                        self.push(Token::Let);
-
-                        info!("tokenizing variable");
-                        let res = self.variable_state_machine(inc);
-                        log::trace!("{res:?}");
-                        i += res;
-                    }
-                    "struct" => {
-                        self.push(Token::Struct);
-
-                        info!("tokenizing struct");
-                        let res = self.struct_state_machine(inc);
-
-                        info!("{res:?}");
-                        info!("{:?}", self.data[i..i + res].trim());
-                        info!("{:?}", self.data[i + res..].trim());
-                        i += res;
-                        info!("finished tokenizing struct");
-                    }
-                    "fn" => {
-                        self.push(Token::Function);
-                    }
-                    "if" => {
-                        self.push(Token::If);
-                    }
-                    "else" => {
-                        self.push(Token::Else);
-                    }
-                    _ => {}
+            if let Some((inc, wrd, peek)) = Tokenizer::next_token(&self.data[i..]) {
+                i += inc;
+                if prev == Token::WhiteSpace && wrd == Token::WhiteSpace {
+                    continue;
                 }
+                if wrd == prev {
+                    continue;
+                }
+                if let Token::Str(s) = wrd {
+                    match s {
+                        "let" => self.push(Token::Let),
+                        "struct" => self.push(Token::Struct),
+                        "enum" => self.push(Token::Enum),
+                        _ => {
+                            self.push(wrd);
+                        }
+                    }
+                } else {
+                    self.push(wrd);
+                }
+                info!("word: {wrd:?} {peek:?}");
+                if let Some(peek) = peek {
+                    self.push(peek);
+                }
+                prev = wrd;
             }
-            match c {
-                'a'..='z' | 'A'..='Z' => {
-                    if word.is_none() {
-                        word = Some(i);
-                    }
-                }
-
-                ' ' => {
-                    // if let Some(idx) = word {
-                    //     log::trace!("found word {:?}", &self.data[idx..i].trim());
-                    // }
-                    // if need_space {
-                    //     self.push(Token::WhiteSpace);
-                    //     need_space = false;
-                    // }
-                    // if let Some(s) = word {
-                    //     let w = self.data[s..i].trim();
-                    //     let mut idx = None;
-                    //     for (y, c) in w.chars().enumerate() {
-                    //         if c == ' ' {
-                    //             idx = Some(y)
-                    //         }
-                    //     }
-                    //     let wrd = match idx {
-                    //         Some(id) => self.data[s..s + id].trim(),
-                    //         None => self.data[s..i].trim(),
-                    //     };
-                    //     info!("{wrd:?}");
-                    //     match wrd {
-                    //         "let" => {
-                    //             self.push(Token::Let);
-                    //
-                    //             info!("tokenizing variable");
-                    //             let res = match idx {
-                    //                 Some(id) => self.variable_state_machine(s + id),
-                    //                 None => self.variable_state_machine(i),
-                    //             };
-                    //             log::trace!("{res:?}");
-                    //             i += res;
-                    //             need_space = true;
-                    //         }
-                    //         "struct" => {
-                    //             self.push(Token::Struct);
-                    //
-                    //             info!("tokenizing struct");
-                    //             let res = match idx {
-                    //                 Some(id) => self.struct_state_machine(s + id),
-                    //                 None => self.struct_state_machine(i),
-                    //             };
-                    //
-                    //             info!("{res:?}");
-                    //             info!("{:?}", self.data[i..i + res].trim());
-                    //             info!("{:?}", self.data[i + res..].trim());
-                    //             i += res;
-                    //             info!("finished tokenizing struct");
-                    //             need_space = true;
-                    //         }
-                    //         "fn" => {
-                    //             self.push(Token::Function);
-                    //         }
-                    //         "if" => {
-                    //             self.push(Token::If);
-                    //         }
-                    //         "else" => {
-                    //             self.push(Token::Else);
-                    //         }
-                    //         _ => {}
-                    //     }
-                    //     word = None;
-                    // }
-                }
-
-                _ => {}
-            }
-            i += 1;
         }
 
         self
-    }
-
-    fn variable_state_machine(&mut self, idx: usize) -> usize {
-        #[derive(Debug)]
-        enum VariableState {
-            VarIdent,
-            VarValue,
-            Semicolon,
-            Number,
-            Str,
-            Array,
-            TypeID,
-            Struct,
-        }
-
-        #[derive(Debug)]
-        enum Ident {
-            Str(usize),
-            Number(usize),
-        }
-
-        let mut state = VariableState::VarIdent;
-
-        let mut ident: Option<Ident> = None;
-
-        let mut quote: Option<usize> = None;
-        log::trace!("tokenizing var");
-        info!("src {:?}", self.data[idx..].trim());
-        let mut found_space = false;
-
-        for (i, ch) in self.data[idx..].chars().enumerate() {
-            info!("{state:?} {ch:?}");
-            match state {
-                VariableState::TypeID => match ch {
-                    '[' => {
-                        self.push(Token::LeftBracket);
-                        ident = Some(Ident::Str(i + 1));
-                    }
-                    ']' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => {
-                                    self.push(Token::TypeID(TypeID::from(
-                                        &self.data[idx + id..idx + i],
-                                    )));
-                                    self.push(Token::RightBracket);
-                                    ident = None;
-
-                                    state = VariableState::VarValue;
-                                }
-                                Ident::Number(_) => panic!(),
-                            }
-                        }
-                    }
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(Ident::Str(i.saturating_sub(1)));
-                        }
-                    }
-                    '0'..='9' => continue,
-                    '=' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => {
-                                    self.push(Token::TypeID(TypeID::from(
-                                        &self.data[idx + id..idx + i],
-                                    )));
-                                }
-
-                                Ident::Number(_) => panic!(),
-                            }
-                            self.push(Token::Equal);
-                            state = VariableState::VarValue;
-                            ident = None;
-                        }
-                    }
-                    ' ' => continue,
-                    c => panic!("{c:?}"),
-                },
-                VariableState::VarIdent => match ch {
-                    '=' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => {
-                                    self.push(Token::Str(
-                                        &self.data[idx + id..idx + i.saturating_sub(1)],
-                                    ));
-                                    self.push(Token::Equal);
-                                    state = VariableState::VarValue;
-                                }
-                                Ident::Number(id) => match self.data.get(idx + id..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Number(s.trim()));
-                                        self.push(Token::Equal);
-                                        state = VariableState::VarValue;
-                                    }
-                                    None => panic!(),
-                                },
-                            }
-                        }
-                        ident = None;
-                    }
-                    ':' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => match self.data.get(idx + id..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Str(s.trim()));
-                                        self.push(Token::Colon);
-                                        state = VariableState::TypeID;
-                                    }
-                                    None => panic!(),
-                                },
-                                Ident::Number(_) => panic!(),
-                            }
-                        }
-                        ident = None;
-                    }
-
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(Ident::Str(i));
-                        }
-                    }
-                    ' ' => {
-                        if !found_space {
-                            self.push(Token::WhiteSpace);
-                            found_space = true;
-                        }
-                    }
-                    ';' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => match self.data.get(idx + id..idx + i) {
-                                    Some(s) => self.push(Token::Str(s)),
-                                    None => panic!(),
-                                },
-                                Ident::Number(_) => todo!(),
-                            }
-                        }
-                        ident = None;
-                    }
-                    c => panic!("{c:?}"),
-                },
-                VariableState::VarValue => match ch {
-                    ':' => {
-                        panic!();
-                    }
-                    '[' => {
-                        self.push(Token::LeftBracket);
-                        state = VariableState::Array
-                    }
-                    'a'..='z' | 'A'..='Z' => {
-                        ident = Some(Ident::Str(i));
-                        state = VariableState::Str;
-                    }
-                    '0'..='9' => {
-                        ident = Some(Ident::Number(i));
-                        state = VariableState::Number;
-                    }
-                    '=' => {
-                        self.push(Token::Equal);
-                    }
-                    _ => {}
-                },
-
-                VariableState::Number => match ch {
-                    ' ' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(_) => panic!("incorrect ident type"),
-
-                                Ident::Number(id) => match self.data.get(idx + id..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Number(s.trim()));
-                                        ident = None;
-                                    }
-                                    None => panic!(),
-                                },
-                            }
-                        }
-                    }
-                    ';' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(_) => panic!("incorrect ident type"),
-
-                                Ident::Number(id) => match self.data.get(idx + id..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Number(s.trim()));
-                                        ident = None;
-                                        state = VariableState::Semicolon;
-                                    }
-                                    None => panic!(),
-                                },
-                            }
-                        }
-                    }
-
-                    'a'..='z' | 'A'..='Z' => {
-                        panic!("expected number found string");
-                    }
-
-                    '0'..='9' => continue,
-                    '\n' => continue,
-
-                    c => panic!("found {c:?}"),
-                },
-
-                VariableState::Str => match ch {
-                    ' ' => {
-                        if let Some(iden) = ident {
-                            info!("{iden:?}");
-                            match iden {
-                                Ident::Str(id) => match self.data.get(idx + id..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Str(s.trim()));
-                                        ident = None;
-                                    }
-
-                                    None => panic!(),
-                                },
-
-                                Ident::Number(_) => panic!("incorrect ident type"),
-                            }
-                        }
-                    }
-                    ';' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(id) => {
-                                    match self.data.get(idx + id..idx + i.saturating_sub(1)) {
-                                        Some(s) => {
-                                            self.push(Token::Str(s.trim()));
-                                        }
-                                        None => panic!(),
-                                    }
-                                }
-
-                                Ident::Number(_) => panic!("incorrect ident type"),
-                            }
-
-                            ident = None;
-                        }
-                        state = VariableState::Semicolon;
-                    }
-
-                    '"' => match quote {
-                        None => quote = Some(i),
-                        Some(ix) => match self.data.get(idx + ix..idx + i.saturating_sub(1)) {
-                            Some(s) => {
-                                info!("{s:?}");
-                                self.push(Token::Str(s.trim()));
-                                ident = None;
-                            }
-                            None => panic!(),
-                        },
-                    },
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(Ident::Str(i));
-                        }
-                        continue;
-                    }
-                    '0'..='9' => {
-                        panic!(
-                            "trying to tokenize string: number or number in a string is unsupported"
-                        );
-                    }
-                    '{' => {
-                        state = VariableState::Struct;
-                        self.push(Token::LeftAngleBracket);
-                    }
-                    '\n' => continue,
-                    _ => panic!("found ch: {ch:?}"),
-                },
-
-                VariableState::Array => match ch {
-                    ']' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(_) => todo!(),
-                                Ident::Number(n) => match self.data.get(idx + n..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Number(s.trim()));
-                                    }
-                                    None => panic!(),
-                                },
-                            }
-                        }
-                        self.push(Token::RightBracket);
-                        ident = None;
-                    }
-                    ';' => {
-                        return i + 2;
-                    }
-                    ',' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(_) => todo!(),
-                                Ident::Number(n) => match self.data.get(idx + n..idx + i) {
-                                    Some(s) => {
-                                        self.push(Token::Number(s.trim()));
-                                    }
-
-                                    None => panic!("{}", &self.data[idx + n..idx + i]),
-                                },
-                            }
-                            self.push(Token::Comma);
-                            ident = None;
-                        }
-                    }
-                    ' ' => {
-                        if let Some(iden) = ident {
-                            match iden {
-                                Ident::Str(_) => todo!(),
-                                Ident::Number(n) => match self.data.get(idx + n..idx + 1) {
-                                    Some(s) => {
-                                        self.push(Token::Number(s.trim()));
-                                    }
-
-                                    None => panic!(),
-                                },
-                            }
-                        }
-                        ident = None;
-                    }
-                    '"' => match quote {
-                        None => quote = Some(i + 1),
-                        Some(id) => match self.data.get(idx + id..idx + i) {
-                            Some(s) => {
-                                self.push(Token::Str(s.trim()));
-                                quote = None;
-                            }
-
-                            None => panic!(),
-                        },
-                    },
-                    '0'..='9' => {
-                        if ident.is_none() {
-                            ident = Some(Ident::Number(i));
-                        }
-                    }
-                    _ => {}
-                },
-
-                VariableState::Struct => {
-                    match ch {
-                        'a'..='z' | 'A'..='Z' => {
-                            if ident.is_none() {
-                                ident = Some(Ident::Str(i));
-                            }
-                            continue;
-                        }
-                        '0'..='9' => {
-                            if ident.is_none() {
-                                ident = Some(Ident::Number(i));
-                            }
-                        }
-                        ' ' | '\n' => {
-                            if ch == ' ' && !found_space {
-                                self.push(Token::WhiteSpace);
-                                found_space = true;
-                            }
-
-                            if let Some(iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(self.data[idx + id..idx + i].trim()));
-                                    }
-
-                                    Ident::Number(id) => {
-                                        self.push(Token::Number(
-                                            self.data[idx + id..idx + i].trim(),
-                                        ));
-                                    }
-                                }
-                            }
-                            ident = None;
-                        }
-
-                        ',' => {
-                            if let Some(iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(self.data[idx + id..idx + i].trim()));
-                                    }
-
-                                    Ident::Number(id) => {
-                                        self.push(Token::Number(
-                                            self.data[idx + id..idx + i].trim(),
-                                        ));
-                                    }
-                                }
-                            }
-                            ident = None;
-                            self.push(Token::Comma);
-                        }
-                        /* for if the struct is let <ident> = Foo {
-                         * urmom: 0
-                         * } */
-                        '}' => {
-                            if let Some(iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(
-                                            self.data[idx + id..idx + i + 1].trim(),
-                                        ));
-                                    }
-
-                                    Ident::Number(id) => {
-                                        self.push(Token::Number(
-                                            self.data[idx + id..idx + i].trim(),
-                                        ));
-                                    }
-                                }
-                            }
-                            self.push(Token::RightAngleBracket);
-                            ident = None;
-                        }
-
-                        '=' => {
-                            if let Some(iden) = ident {
-                                match iden {
-                                    Ident::Str(id) => {
-                                        self.push(Token::Str(self.data[idx + id..idx + i].trim()))
-                                    }
-
-                                    Ident::Number(_) => panic!(),
-                                }
-                            }
-                            self.push(Token::Equal);
-                            ident = None;
-                        }
-                        ';' => {
-                            self.push(Token::Semicolon);
-                            state = VariableState::Semicolon;
-                            continue;
-                        }
-
-                        _ => {}
-                    }
-                }
-
-                VariableState::Semicolon => {
-                    self.push(Token::Semicolon);
-
-                    return i;
-                }
-            }
-        }
-
-        0
-    }
-
-    fn struct_state_machine(&mut self, idx: usize) -> usize {
-        #[derive(Debug, Clone, Copy, PartialEq)]
-        enum StructState {
-            Name,
-            LeftBracket,
-            VarIdent,
-            TypeID,
-        }
-
-        let mut state = StructState::Name;
-
-        let mut ident = None;
-
-        log::trace!("src {:?}", self.data[idx..].trim());
-
-        let mut found_space = false;
-
-        for (i, ch) in self.data[idx..].chars().enumerate() {
-            log::trace!("{state:?}");
-            match state {
-                StructState::Name => match ch {
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(i);
-                        }
-                    }
-                    ' ' | '\n' => {
-                        if ch == ' ' && !found_space {
-                            self.push(Token::WhiteSpace);
-                            found_space = true;
-                        }
-                        if let Some(iden) = ident {
-                            let var = self.data[idx + iden..idx + i].trim();
-                            self.push(Token::Str(var));
-                            state = StructState::LeftBracket;
-                            ident = None;
-                            found_space = false;
-                        }
-                    }
-                    c => panic!("{c:?}"),
-                },
-                StructState::LeftBracket => match ch {
-                    '{' => {
-                        if let Some(iden) = ident {
-                            self.push(Token::Str(&self.data[idx + iden..idx + i]));
-                        }
-
-                        self.push(Token::LeftAngleBracket);
-                        state = StructState::VarIdent;
-                    }
-                    ' ' | '\n' => continue,
-                    c => panic!("{c:?}"),
-                },
-                StructState::VarIdent => match ch {
-                    ':' => {
-                        match ident {
-                            Some(iden) => {
-                                let var = self.data[idx + iden..idx + i].trim();
-                                info!("{var:?}");
-                                self.push(Token::Str(var));
-                                ident = None;
-                                state = StructState::TypeID;
-                            }
-                            None => {
-                                panic!("expect <name>:");
-                            }
-                        }
-                        self.push(Token::Colon);
-                        // state = StructState::Colon;
-                    }
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(i);
-                        }
-                    }
-                    '}' => {
-                        self.push(Token::RightAngleBracket);
-                        return i + 1;
-                    }
-                    ' ' => {
-                        if !found_space {
-                            self.push(Token::WhiteSpace);
-                            found_space = true;
-                        }
-                    }
-                    _ => {}
-                },
-                StructState::TypeID => match ch {
-                    'a'..='z' | 'A'..='Z' => {
-                        if ident.is_none() {
-                            ident = Some(i);
-                        }
-                    }
-                    ' ' | '\n' | ',' | '}' => {
-                        if let Some(iden) = ident {
-                            self.push(Token::TypeID(TypeID::from(
-                                self.data[idx + iden..idx + i].trim(),
-                            )));
-                        }
-
-                        if !found_space && ch == ' ' {
-                            self.push(Token::WhiteSpace);
-                            state = StructState::VarIdent;
-                        }
-                        if ch == ',' {
-                            self.push(Token::Comma);
-                            state = StructState::VarIdent;
-                        }
-                        if ch == '}' {
-                            self.push(Token::RightAngleBracket);
-                        }
-                    }
-
-                    _ => {}
-                },
-            }
-        }
-
-        0
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::time::SystemTime;
-
     use crate::tokenizer::{Token, Tokenizer};
 
     fn setup_logger() {
         _ = fern::Dispatch::new()
             .format(|out, message, record| {
                 out.finish(format_args!(
-                    "[{} {} {}] {}",
-                    humantime::format_rfc3339_seconds(SystemTime::now()),
+                    "[{} {}] {}",
                     record.level(),
                     record.target(),
                     message
                 ))
             })
-            .level(log::LevelFilter::Debug)
+            .level(log::LevelFilter::Info)
             .chain(std::io::stdout())
             .apply();
     }
@@ -990,5 +493,207 @@ mod test {
                 rep.push(*tok);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod token {
+    use std::fmt::Write;
+
+    use crate::tokenizer::{Token, Tokenizer};
+
+    fn setup_logger() {
+        _ = fern::Dispatch::new()
+            .format(|out, message, record| {
+                out.finish(format_args!(
+                    "[{} {}] {}",
+                    record.level(),
+                    record.target(),
+                    message
+                ))
+            })
+            .level(log::LevelFilter::Info)
+            .chain(std::io::stdout())
+            .apply();
+    }
+
+    #[test]
+    fn let_test() {
+        setup_logger();
+
+        let data = "let ";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+        assert_eq!([Token::Let, Token::WhiteSpace], tokenizer.tokens.as_slice());
+
+        info!("{tokenizer:?}");
+    }
+
+    #[test]
+    fn let_var_string() {
+        setup_logger();
+
+        let data = "let foo = \"bar\"";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::WhiteSpace,
+                Token::Equal,
+                Token::WhiteSpace,
+                Token::QuotedString("bar")
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_num() {
+        setup_logger();
+
+        let data = "let foo = 10";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::WhiteSpace,
+                Token::Equal,
+                Token::WhiteSpace,
+                Token::Number("10"),
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_float() {
+        setup_logger();
+
+        let data = "let foo = 10.0";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::WhiteSpace,
+                Token::Equal,
+                Token::WhiteSpace,
+                Token::Number("10.0"),
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_struct() {
+        setup_logger();
+
+        let data = "let foo = Foo {
+        baz = 0;
+        }";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::WhiteSpace,
+                Token::Equal,
+                Token::WhiteSpace,
+                Token::Str("Foo"),
+                Token::WhiteSpace,
+                Token::LeftAngleBracket,
+                Token::WhiteSpace,
+                Token::Str("baz"),
+                Token::WhiteSpace,
+                Token::Equal,
+                Token::WhiteSpace,
+                Token::Number("0"),
+                Token::Semicolon,
+                Token::WhiteSpace,
+                Token::RightAngleBracket,
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_struct_decl() {
+        setup_logger();
+
+        let data = "struct Foo {
+        bar: i32,
+        baz:i32,
+        }";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Struct,
+                Token::WhiteSpace,
+                Token::Str("Foo"),
+                Token::WhiteSpace,
+                Token::LeftAngleBracket,
+                Token::WhiteSpace,
+                Token::Str("bar"),
+                Token::Colon,
+                Token::WhiteSpace,
+                Token::Str("i32"),
+                Token::Comma,
+                Token::WhiteSpace,
+                Token::Str("baz"),
+                Token::Colon,
+                Token::Str("i32"),
+                Token::Comma,
+                Token::WhiteSpace,
+                Token::RightAngleBracket
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_enum_decl() {
+        setup_logger();
+
+        let data = "enum Foo {
+        Bar,
+        Baz,
+        }";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Enum,
+                Token::WhiteSpace,
+                Token::Str("Foo"),
+                Token::WhiteSpace,
+                Token::LeftAngleBracket,
+                Token::WhiteSpace,
+                Token::Str("Bar"),
+                Token::Comma,
+                Token::WhiteSpace,
+                Token::Str("Baz"),
+                Token::Comma,
+                Token::WhiteSpace,
+                Token::RightAngleBracket
+            ],
+            tokenizer.tokens.as_slice()
+        );
     }
 }
