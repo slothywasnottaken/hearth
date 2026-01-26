@@ -67,9 +67,16 @@ pub enum Token<'a> {
     LeftBracket,
     RightBracket,
     Dot,
+
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
     // should typeid be a type? introspection could be cool but a little useless :3
     TypeID(TypeID),
     Return,
+
+    Pub,
 
     // types
     Struct,
@@ -105,6 +112,7 @@ pub enum TypeID {
     U64,
 
     String,
+    QuotedString,
     /// for structs (? idkkkkkkk)
     Unknown,
     Array,
@@ -166,7 +174,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    pub fn push(&mut self, token: Token<'a>) {
+    fn push(&mut self, token: Token<'a>) {
         if token == Token::WhiteSpace {
             info!("adding white space");
         }
@@ -189,6 +197,37 @@ impl<'a> Tokenizer<'a> {
                         ident = Some(Ident::Word(i));
                     }
                 }
+                '+' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Plus)));
+                    } else {
+                        return Some((i + 1, Token::Plus, None));
+                    }
+                }
+                '-' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Minus)));
+                    } else {
+                        return Some((i + 1, Token::Minus, None));
+                    }
+                }
+
+                '*' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Multiply)));
+                    } else {
+                        return Some((i + 1, Token::Multiply, None));
+                    }
+                }
+
+                '/' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Divide)));
+                    } else {
+                        return Some((i + 1, Token::Divide, None));
+                    }
+                }
+
                 '0'..='9' => {
                     if ident.is_none() {
                         ident = Some(Ident::Number(i));
@@ -196,7 +235,7 @@ impl<'a> Tokenizer<'a> {
                 }
                 ':' => {
                     if let Some(iden) = ident {
-                        return Some((i, iden.into_str(source, i), None));
+                        return Some((i, iden.into_str(source, i), Some(Token::Colon)));
                     } else {
                         return Some((i + 1, Token::Colon, None));
                     }
@@ -225,6 +264,7 @@ impl<'a> Tokenizer<'a> {
                 '=' => {
                     if let Some(iden) = ident {
                         debug!("found {ch:?} {:?}", (i, source[iden.inner()..i].trim()));
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Equal)));
                     }
                     return Some((i + 1, Token::Equal, None));
                 }
@@ -332,6 +372,10 @@ impl<'a> Tokenizer<'a> {
                         "let" => self.push(Token::Let),
                         "struct" => self.push(Token::Struct),
                         "enum" => self.push(Token::Enum),
+                        "return" => self.push(Token::Return),
+                        "pub" => self.push(Token::Pub),
+                        "if" => self.push(Token::If),
+                        "else" => self.push(Token::Else),
                         _ => {
                             self.push(wrd);
                         }
@@ -352,154 +396,7 @@ impl<'a> Tokenizer<'a> {
 }
 
 #[cfg(test)]
-mod test {
-    use crate::tokenizer::{Token, Tokenizer};
-
-    fn setup_logger() {
-        _ = fern::Dispatch::new()
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "[{} {}] {}",
-                    record.level(),
-                    record.target(),
-                    message
-                ))
-            })
-            .level(log::LevelFilter::Info)
-            .chain(std::io::stdout())
-            .apply();
-    }
-
-    #[test]
-    fn str_var() {
-        setup_logger();
-        let src = r#"let foo="bar";"#;
-        let tokenizer = Tokenizer::new(src).tokenize();
-        info!("{:?}", tokenizer.tokens);
-        assert_eq!(*tokenizer.tokens.get(4).unwrap(), Token::Str("bar"))
-    }
-
-    #[test]
-    fn num_var() {
-        setup_logger();
-        let src = "let foo = 10; ";
-        let tokenizer = Tokenizer::new(src).tokenize();
-        info!("{:?}", tokenizer.tokens);
-        assert_eq!(*tokenizer.tokens.get(4).unwrap(), Token::Number("10"))
-    }
-
-    #[test]
-    fn multiple_vars() {
-        setup_logger();
-        let src = "let foo = \"bar\"; let foo = 10;";
-        let tokenizer = Tokenizer::new(src).tokenize();
-        info!("{tokenizer:?}");
-    }
-
-    #[test]
-    fn tokenize_struct() {
-        setup_logger();
-        let src = "struct foo {
-            bar: i32,
-        }";
-
-        let tokenizer = Tokenizer::new(src).tokenize();
-
-        assert_eq!(
-            *tokenizer.tokens.as_slice(),
-            [
-                Token::Struct,
-                Token::WhiteSpace,
-                Token::Str("foo"),
-                Token::LeftAngleBracket,
-                Token::WhiteSpace,
-                Token::Str("bar"),
-                Token::Colon,
-                Token::Str("i32"),
-                Token::RightAngleBracket
-            ]
-        );
-
-        info!("{tokenizer:?}");
-    }
-
-    #[test]
-    fn struct_assignment() {
-        setup_logger();
-        let src = r#"
-        struct Foo {
-        bar: i32,
-        }
-        
-        let bar = Foo {
-            bar = 0,
-        };
-        "#;
-
-        let tokenizer = Tokenizer::new(src).tokenize();
-        let tokens = tokenizer.tokens;
-        info!("{tokens:?}");
-
-        let mut rep = vec![];
-
-        for tok in tokens.iter() {
-            if tok != &Token::WhiteSpace {
-                rep.push(*tok);
-            }
-        }
-
-        assert_eq!(
-            rep.as_slice(),
-            [
-                Token::Struct,
-                Token::Str("Foo"),
-                Token::LeftAngleBracket,
-                Token::Str("bar"),
-                Token::Colon,
-                Token::Str("i32"),
-                Token::Comma,
-                Token::RightAngleBracket,
-                Token::Let,
-                Token::Str("bar"),
-                Token::Equal,
-                Token::Str("Foo"),
-                Token::LeftAngleBracket,
-                Token::Str("bar"),
-                Token::Equal,
-                Token::Number("0"),
-                Token::Comma,
-                Token::RightAngleBracket,
-                Token::Semicolon,
-            ]
-        );
-    }
-
-    #[test]
-    fn array() {
-        setup_logger();
-        let src = r#"
-        let foo: [i32] = [1, 2, 3, "foo"];
-        let bar = foo;
-        "#;
-
-        let tokenizer = Tokenizer::new(src).tokenize();
-        let tokens = tokenizer.tokens;
-        info!("{tokens:?}");
-
-        let mut rep = vec![];
-
-        for tok in tokens.iter() {
-            if tok != &Token::WhiteSpace {
-                rep.push(*tok);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 mod token {
-    use std::fmt::Write;
-
     use crate::tokenizer::{Token, Tokenizer};
 
     fn setup_logger() {
@@ -533,6 +430,26 @@ mod token {
     fn let_var_string() {
         setup_logger();
 
+        let data = "let foo=\"bar\"";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::Equal,
+                Token::QuotedString("bar")
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_string_whitespace() {
+        setup_logger();
+
         let data = "let foo = \"bar\"";
 
         let tokenizer = Tokenizer::new(data).tokenize();
@@ -553,6 +470,26 @@ mod token {
 
     #[test]
     fn let_var_num() {
+        setup_logger();
+
+        let data = "let foo=10";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::Equal,
+                Token::Number("10"),
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_num_whitespace() {
         setup_logger();
 
         let data = "let foo = 10";
@@ -577,6 +514,26 @@ mod token {
     fn let_var_float() {
         setup_logger();
 
+        let data = "let foo=10.0";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::Equal,
+                Token::Number("10.0"),
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_float_whitespace() {
+        setup_logger();
+
         let data = "let foo = 10.0";
 
         let tokenizer = Tokenizer::new(data).tokenize();
@@ -597,6 +554,34 @@ mod token {
 
     #[test]
     fn let_var_struct() {
+        setup_logger();
+
+        let data = "let foo=Foo{baz=0;}";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        info!("{:?}", tokenizer.tokens);
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::Equal,
+                Token::Str("Foo"),
+                Token::LeftAngleBracket,
+                Token::Str("baz"),
+                Token::Equal,
+                Token::Number("0"),
+                Token::Semicolon,
+                Token::RightAngleBracket,
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_struct_whitespace() {
         setup_logger();
 
         let data = "let foo = Foo {
@@ -632,6 +617,34 @@ mod token {
 
     #[test]
     fn let_struct_decl() {
+        setup_logger();
+
+        let data = "struct Foo{bar:i32,baz:i32,}";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Struct,
+                Token::WhiteSpace,
+                Token::Str("Foo"),
+                Token::LeftAngleBracket,
+                Token::Str("bar"),
+                Token::Colon,
+                Token::Str("i32"),
+                Token::Comma,
+                Token::Str("baz"),
+                Token::Colon,
+                Token::Str("i32"),
+                Token::Comma,
+                Token::RightAngleBracket
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_struct_decl_whitespace() {
         setup_logger();
 
         let data = "struct Foo {
@@ -670,6 +683,30 @@ mod token {
     fn let_enum_decl() {
         setup_logger();
 
+        let data = "enum Foo{Bar,Baz,}";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        assert_eq!(
+            [
+                Token::Enum,
+                Token::WhiteSpace,
+                Token::Str("Foo"),
+                Token::LeftAngleBracket,
+                Token::Str("Bar"),
+                Token::Comma,
+                Token::Str("Baz"),
+                Token::Comma,
+                Token::RightAngleBracket
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_enum_decl_whitespace() {
+        setup_logger();
+
         let data = "enum Foo {
         Bar,
         Baz,
@@ -695,5 +732,168 @@ mod token {
             ],
             tokenizer.tokens.as_slice()
         );
+    }
+
+    #[test]
+    fn let_var_enum() {
+        setup_logger();
+
+        let data = "let foo=Foo::Urmom;";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        info!("{:?}", tokenizer.tokens);
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::Equal,
+                Token::Str("Foo"),
+                Token::Colon,
+                Token::Colon,
+                Token::Str("Urmom"),
+                Token::Semicolon
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_enum_whitespace() {
+        setup_logger();
+
+        let data = "let foo = Foo::Urmom;";
+
+        let tokenizer = Tokenizer::new(data).tokenize();
+
+        info!("{:?}", tokenizer.tokens);
+
+        assert_eq!(
+            [
+                Token::Let,
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::WhiteSpace,
+                Token::Equal,
+                Token::WhiteSpace,
+                Token::Str("Foo"),
+                Token::Colon,
+                Token::Colon,
+                Token::Str("Urmom"),
+                Token::Semicolon
+            ],
+            tokenizer.tokens.as_slice()
+        );
+    }
+
+    #[cfg(test)]
+    mod ops {
+        use crate::tokenizer::{Token, Tokenizer, token::setup_logger};
+
+        #[test]
+        fn add() {
+            setup_logger();
+            let data = "foo+bar";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Plus, Token::Str("bar")],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn add_whitespace() {
+            setup_logger();
+            let data = "foo+ ";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Plus, Token::WhiteSpace],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn sub() {
+            setup_logger();
+            let data = "foo-bar";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Minus, Token::Str("bar")],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn sub_whitespace() {
+            setup_logger();
+            let data = "foo- ";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Minus, Token::WhiteSpace],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn mult() {
+            setup_logger();
+            let data = "foo*bar";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Multiply, Token::Str("bar")],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn mult_whitespace() {
+            setup_logger();
+            let data = "foo* ";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Multiply, Token::WhiteSpace],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn div() {
+            setup_logger();
+            let data = "foo/bar";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Divide, Token::Str("bar")],
+                tokenizer.tokens.as_slice()
+            );
+        }
+
+        #[test]
+        fn div_whitespace() {
+            setup_logger();
+            let data = "foo/ ";
+
+            let tokenizer = Tokenizer::new(data).tokenize();
+
+            assert_eq!(
+                [Token::Str("foo"), Token::Divide, Token::WhiteSpace],
+                tokenizer.tokens.as_slice()
+            );
+        }
     }
 }

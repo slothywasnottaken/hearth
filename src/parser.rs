@@ -7,6 +7,13 @@ use crate::info;
 
 use crate::tokenizer::{Token, Tokenizer, TypeID};
 
+/// custom type declarations like defined structs, enums and maybe globals if i allow for it
+#[derive(Debug)]
+enum ParsedType<'a> {
+    Enum(EnumType<'a>),
+    Struct(StructType<'a>),
+}
+
 #[derive(Debug)]
 pub struct Parser<'a> {
     data: &'a str,
@@ -129,8 +136,15 @@ impl<'a> Parser<'a> {
                     Token::RightAngleBracket => panic!(),
                     Token::LeftBracket => panic!(),
                     Token::RightBracket => panic!(),
+                    Token::QuotedString(s) => {
+                        if var_val.is_none() {
+                            var_val = Some(Variable::QuotedString(s))
+                        } else {
+                            panic!()
+                        }
+                    }
                     tok => {
-                        panic!("{tok:?}")
+                        panic!("token {tok:?}")
                     }
                 },
             }
@@ -139,10 +153,7 @@ impl<'a> Parser<'a> {
 
         info!("{var_name:?} {var_val:?}");
 
-        match (var_name, var_val) {
-            (Some(name), Some(val)) => Some((name, val)),
-            _ => None,
-        }
+        panic!("statement was not terminated with semicolon")
     }
 
     fn parse_struct_assignment(tokens: &[Token<'a>]) -> Option<(&'a str, StructVar<'a>)> {
@@ -201,7 +212,7 @@ impl<'a> Parser<'a> {
         None
     }
 
-    fn parse_struct(tokens: &[Token<'a>]) -> Option<(&'a str, StructType)> {
+    fn parse_struct(tokens: &[Token<'a>]) -> Option<(&'a str, StructType<'a>)> {
         #[derive(Debug, Clone, Copy)]
         enum StructState {
             Name,
@@ -242,7 +253,7 @@ impl<'a> Parser<'a> {
                     // Token::LeftAngleBracket => todo!(),
                     Token::RightAngleBracket => {
                         if let (Some(name), Some(val)) = (field_name, field_val) {
-                            struct_type.fields.push((name.to_string(), val));
+                            struct_type.fields.push((name, val));
                         };
                         return Some((name.unwrap(), struct_type));
                     }
@@ -252,7 +263,7 @@ impl<'a> Parser<'a> {
                         log::trace!("{field_name:?} {field_val:?}");
                         struct_type
                             .fields
-                            .push((field_name.unwrap().to_string(), field_val.unwrap()));
+                            .push((field_name.unwrap(), field_val.unwrap()));
                         field_name = None;
                         field_val = None;
                     }
@@ -281,6 +292,7 @@ pub enum Variable<'a> {
     U64(u64),
 
     String(&'a str),
+    QuotedString(&'a str),
     Struct(StructVar<'a>),
     Array(Array<'a>),
 }
@@ -322,6 +334,7 @@ impl Variable<'_> {
             Variable::U16(_) => TypeID::U16,
             Variable::U32(_) => TypeID::U32,
             Variable::U64(_) => TypeID::U64,
+            Variable::QuotedString(_) => TypeID::QuotedString,
             Variable::String(_) => TypeID::String,
             Variable::Struct(_) => TypeID::Unknown,
             Variable::Array(_) => TypeID::Array,
@@ -329,9 +342,14 @@ impl Variable<'_> {
     }
 }
 
+#[derive(Debug)]
+struct EnumType<'a> {
+    fields: Vec<&'a str>,
+}
+
 #[derive(Debug, Default)]
-pub struct StructType {
-    fields: Vec<(String, TypeID)>,
+pub struct StructType<'a> {
+    fields: Vec<(&'a str, TypeID)>,
 }
 
 /// could be represented as a slice of type ids?
@@ -350,14 +368,16 @@ impl<'a> StructVar<'a> {
 #[derive(Debug)]
 pub enum AstNode<'a> {
     Variable((&'a str, Variable<'a>)),
-    StructType((&'a str, StructType)),
+    StructType((&'a str, StructType<'a>)),
 }
 
 #[cfg(test)]
-mod parser_test {
+mod test {
     use std::time::SystemTime;
 
     use log::info;
+
+    use crate::parser::Parser;
 
     fn setup_logger() -> Result<(), fern::InitError> {
         fern::Dispatch::new()
@@ -379,6 +399,9 @@ mod parser_test {
     #[test]
     fn array() {
         setup_logger().unwrap();
-        info!("foo");
+        let data = "let foo = \"bar\" ;";
+
+        let parser = Parser::new(data).parse();
+        info!("{:?}", parser.ast);
     }
 }

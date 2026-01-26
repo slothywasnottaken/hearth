@@ -895,3 +895,182 @@
 [2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "="
 [2026-01-24T05:50:40Z INFO hearth::tokenizer] [hearth::tokenizer::Tokenizer<'_>::tokenize] word: "foo;"
 [2026-01-24T05:50:40Z INFO hearth::tokenizer::test] [hearth::tokenizer::test::array] []
+[INFO hearth::parser::parser] foo
+[INFO hearth::parser::parser] foo
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: ";"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Semicolon None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ;", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace, Semicolon] }
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: ";"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Semicolon None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ;", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace, Semicolon] }
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: ";"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Semicolon None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ;", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace, Semicolon] }
+[INFO hearth::parser::parser] [Variable(("foo", QuotedString("bar")))]
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: ";"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Semicolon None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ;", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace, Semicolon] }
+[INFO hearth::parser::test] [Variable(("foo", QuotedString("bar")))]
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" "
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" "
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " "
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace] }
+[INFO hearth::parser] [Parser<'_>::parse_var] Some("foo") Some(QuotedString("bar"))
+[INFO hearth::parser::test] [Variable(("foo", QuotedString("bar")))]
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" "
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" "
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " "
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace] }
+[INFO hearth::parser] [Parser<'_>::parse_var] Some("foo") Some(QuotedString("bar"))
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" "
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" "
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" "
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " "
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace] }
+[INFO hearth::parser] [Parser<'_>::parse_var] Some("foo") Some(QuotedString("bar"))
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::tokenize] "let foo = \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "let foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("let"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("let") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "foo = \"bar\" ;"
+[DEBUG hearth::tokenizer] [Tokenizer<'_>::next_token] found ' ': (3, Str("foo"))
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Str("foo") Some(WhiteSpace)
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "= \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Equal None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " \"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: "\"bar\" ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: QuotedString("bar") None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: " ;"
+[INFO hearth::tokenizer] [Tokenizer<'_>::push] adding white space
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: WhiteSpace None
+[INFO hearth::tokenizer] [Tokenizer<'_>::next_token] src: ";"
+[INFO hearth::tokenizer] [Tokenizer<'_>::tokenize] word: Semicolon None
+[INFO hearth::parser] [Parser<'_>::parse] Tokenizer { data: "let foo = \"bar\" ;", tokens: [Let, WhiteSpace, Str("foo"), WhiteSpace, Equal, WhiteSpace, QuotedString("bar"), WhiteSpace, Semicolon] }
+[INFO hearth::parser::test] [Variable(("foo", QuotedString("bar")))]
