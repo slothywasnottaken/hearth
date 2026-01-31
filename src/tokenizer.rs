@@ -1,60 +1,9 @@
+#![allow(unused)]
 use std::fmt::Display;
 
-#[macro_export]
-macro_rules! function_name {
-    () => {{
-        // Okay, this is ugly, I get it. However, this is the best we can get on a stable rust.
-        fn f() {}
-        fn type_name_of<T>(_: T) -> &'static str {
-            let name = std::any::type_name::<T>();
-            if let Some(stripped) = name.strip_prefix(module_path!()) {
-                // cursed way of skipping the following :: from module_path!
-                return &stripped[2..];
-            }
-            name
-        }
-        let name = type_name_of(f);
-        // `3` is the length of the `::f`.
-        &name[..name.len() - 3]
-    }};
-}
+use tracing::{debug, error};
 
-#[macro_export]
-macro_rules! trace {
-    ($($arg:tt)*) => {
-        log::trace!("[{}] {}", function_name!(), format_args!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        log::debug!("[{}] {}", function_name!(), format_args!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! info {
-    ($($arg:tt)*) => {
-        log::info!("[{}] {}", function_name!(), format_args!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! warn {
-    ($($arg:tt)*) => {
-        log::warn!("[{}] {}", function_name!(), format_args!($($arg)*));
-    };
-}
-
-#[macro_export]
-macro_rules! error {
-    ($($arg:tt)*) => {
-        log::warn!("[{}] {}", function_name!(), format_args!($($arg)*));
-    };
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
     Let,
     WhiteSpace,
@@ -67,6 +16,8 @@ pub enum Token<'a> {
     LeftBracket,
     RightBracket,
     Dot,
+    // !
+    Exclamation,
 
     Plus,
     Minus,
@@ -77,20 +28,24 @@ pub enum Token<'a> {
     Return,
 
     Pub,
+    Mutable,
 
     // types
     Struct,
-    Array,
     Number(&'a str),
     Str(&'a str),
     QuotedString(&'a str),
-    Float,
     Enum,
 
+    LeftParen,
+    RightParen,
+
     Function,
-    Module,
     If,
     Else,
+
+    #[default]
+    Unknown,
 }
 
 impl Display for Token<'_> {
@@ -111,29 +66,40 @@ pub enum TypeID {
     U32,
     U64,
 
+    F32,
+    F64,
+
     String,
     QuotedString,
     /// for structs (? idkkkkkkk)
     Unknown,
     Array,
+    Enum,
 }
 
-impl From<&str> for TypeID {
-    fn from(value: &str) -> Self {
+#[derive(Debug)]
+pub enum TypeIDError {
+    NotTypeID,
+}
+
+impl TryFrom<&str> for TypeID {
+    type Error = TypeIDError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "i8" => TypeID::I8,
-            "i16" => TypeID::I16,
-            "i32" => TypeID::I32,
-            "i64" => TypeID::I64,
+            "i8" => Ok(TypeID::I8),
+            "i16" => Ok(TypeID::I16),
+            "i32" => Ok(TypeID::I32),
+            "i64" => Ok(TypeID::I64),
 
-            "u8" => TypeID::U8,
-            "u16" => TypeID::U16,
-            "U32" => TypeID::U32,
-            "u64" => TypeID::U64,
+            "u8" => Ok(TypeID::U8),
+            "u16" => Ok(TypeID::U16),
+            "U32" => Ok(TypeID::U32),
+            "u64" => Ok(TypeID::U64),
 
-            "String" => TypeID::String,
+            "String" => Ok(TypeID::String),
 
-            _ => TypeID::Unknown,
+            _ => Err(TypeIDError::NotTypeID),
         }
     }
 }
@@ -147,7 +113,13 @@ enum Ident {
 impl Ident {
     fn into_str<'a>(self, s: &'a str, idx: usize) -> Token<'a> {
         match self {
-            Ident::Word(w) => Token::Str(s[w..idx].trim()),
+            Ident::Word(w) => {
+                if let Ok(id) = TypeID::try_from(s[w..idx].trim()) {
+                    Token::TypeID(id)
+                } else {
+                    Token::Str(s[w..idx].trim())
+                }
+            }
             Ident::Number(w) => Token::Number(s[w..idx].trim()),
         }
     }
@@ -160,33 +132,26 @@ impl Ident {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
 #[derive(Debug)]
 pub struct Tokenizer<'a> {
-    pub(crate) data: &'a str,
-    pub(crate) tokens: Vec<Token<'a>>,
+    tokens: Vec<Token<'a>>,
 }
 
 impl<'a> Tokenizer<'a> {
-    pub fn new(data: &'a str) -> Self {
-        Self {
-            data,
-            tokens: vec![],
-        }
+    pub fn tokens(&self) -> &[Token<'a>] {
+        &self.tokens
     }
-
-    fn push(&mut self, token: Token<'a>) {
-        if token == Token::WhiteSpace {
-            info!("adding white space");
-        }
-        trace!("{token:?}");
-        self.tokens.push(token);
-    }
-
     /// works as an iterator, the number it returns is an increment amount, you can give it a big
     /// string and repeatedly call next() on it and just increment the start of your slice to get
     /// the next word
     fn next_token(source: &str) -> Option<(usize, Token<'_>, Option<Token<'_>>)> {
-        info!("src: {source:?}");
+        // info!("src: {source:?}");
 
         let mut ident: Option<Ident> = None;
         let mut quoted = false;
@@ -202,6 +167,20 @@ impl<'a> Tokenizer<'a> {
                         return Some((i + 1, iden.into_str(source, i), Some(Token::Plus)));
                     } else {
                         return Some((i + 1, Token::Plus, None));
+                    }
+                }
+                '(' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::LeftParen)));
+                    } else {
+                        return Some((i + 1, Token::LeftParen, None));
+                    }
+                }
+                ')' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::RightParen)));
+                    } else {
+                        return Some((i + 1, Token::RightParen, None));
                     }
                 }
                 '-' => {
@@ -227,6 +206,18 @@ impl<'a> Tokenizer<'a> {
                         return Some((i + 1, Token::Divide, None));
                     }
                 }
+                '.' => {
+                    if let Some(ref iden) = ident
+                        && let Ident::Number(_) = iden
+                    {
+                        continue;
+                    }
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Dot)));
+                    } else {
+                        return Some((i + 1, Token::Dot, None));
+                    }
+                }
 
                 '0'..='9' => {
                     if ident.is_none() {
@@ -235,11 +226,19 @@ impl<'a> Tokenizer<'a> {
                 }
                 ':' => {
                     if let Some(iden) = ident {
-                        return Some((i, iden.into_str(source, i), Some(Token::Colon)));
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Colon)));
                     } else {
                         return Some((i + 1, Token::Colon, None));
                     }
                 }
+                '!' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::Exclamation)));
+                    } else {
+                        return Some((i + 1, Token::Exclamation, None));
+                    }
+                }
+
                 ',' => {
                     if let Some(iden) = ident {
                         // i + 2 to skip over the string and then the comma
@@ -250,6 +249,9 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 ' ' => {
+                    if ident.is_none() {
+                        return Some((i + 1, Token::WhiteSpace, None));
+                    }
                     if let Some(iden) = ident {
                         debug!(
                             "found {ch:?}: {:?}",
@@ -290,7 +292,7 @@ impl<'a> Tokenizer<'a> {
                             Some(Token::LeftAngleBracket),
                         ));
                     }
-                    return Some((i + 2, Token::LeftAngleBracket, None));
+                    return Some((i + 1, Token::LeftAngleBracket, None));
                 }
                 '}' => {
                     if let Some(iden) = ident {
@@ -337,8 +339,12 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
                 },
+                '\n' => continue,
 
-                _ => continue,
+                tok => {
+                    error!("error: found {tok:?}");
+                    return Some((i, Token::Unknown, None));
+                }
             }
         }
 
@@ -349,69 +355,67 @@ impl<'a> Tokenizer<'a> {
         None
     }
 
-    pub fn tokenize(mut self) -> Self {
-        debug!("{:?}", self.data);
+    pub fn tokenize(data: &'a str) -> Self {
+        debug!("{data:?}");
 
         let mut i = 0;
-        let mut prev = Token::WhiteSpace;
+        let mut prev = Token::Unknown;
+        let mut tokens: Vec<Token> = vec![];
 
         loop {
-            if i >= self.data.len() {
+            if i >= data.len() {
                 break;
             }
-            if let Some((inc, wrd, peek)) = Tokenizer::next_token(&self.data[i..]) {
-                i += inc;
-                if prev == Token::WhiteSpace && wrd == Token::WhiteSpace {
-                    continue;
+            if let Some((inc, wrd, peek)) = Tokenizer::next_token(&data[i..]) {
+                // info!("found {prev} {wrd} {peek:?}");
+                if wrd == Token::Unknown {
+                    panic!("found unknown token");
                 }
-                if wrd == prev {
+
+                if prev == Token::WhiteSpace && wrd == Token::WhiteSpace {
+                    i += 1;
                     continue;
                 }
                 if let Token::Str(s) = wrd {
-                    match s {
-                        "let" => self.push(Token::Let),
-                        "struct" => self.push(Token::Struct),
-                        "enum" => self.push(Token::Enum),
-                        "return" => self.push(Token::Return),
-                        "pub" => self.push(Token::Pub),
-                        "if" => self.push(Token::If),
-                        "else" => self.push(Token::Else),
-                        _ => {
-                            self.push(wrd);
-                        }
-                    }
+                    let t = match s {
+                        "let" => Token::Let,
+                        "struct" => Token::Struct,
+                        "enum" => Token::Enum,
+                        "return" => Token::Return,
+                        "mut" => Token::Mutable,
+                        "pub" => Token::Pub,
+                        "if" => Token::If,
+                        "else" => Token::Else,
+                        "fn" => Token::Function,
+                        _ => wrd,
+                    };
+
+                    tokens.push(t);
                 } else {
-                    self.push(wrd);
+                    tokens.push(wrd);
                 }
-                info!("word: {wrd:?} {peek:?}");
+                // info!("word: {wrd:?} {peek:?}");
                 if let Some(peek) = peek {
-                    self.push(peek);
+                    tokens.push(peek);
                 }
                 prev = wrd;
+                i += inc;
             }
         }
 
-        self
+        Self { tokens }
     }
 }
 
 #[cfg(test)]
 mod token {
-    use crate::tokenizer::{Token, Tokenizer};
+    use tracing::info;
+
+    use crate::tokenizer::{Token, Tokenizer, TypeID};
 
     fn setup_logger() {
-        _ = fern::Dispatch::new()
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "[{} {}] {}",
-                    record.level(),
-                    record.target(),
-                    message
-                ))
-            })
-            .level(log::LevelFilter::Info)
-            .chain(std::io::stdout())
-            .apply();
+        let _guard =
+            tracing::subscriber::set_global_default(tracing_subscriber::FmtSubscriber::new());
     }
 
     #[test]
@@ -420,8 +424,9 @@ mod token {
 
         let data = "let ";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
-        assert_eq!([Token::Let, Token::WhiteSpace], tokenizer.tokens.as_slice());
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
+        assert_eq!([Token::Let, Token::WhiteSpace], tokens.as_slice());
 
         info!("{tokenizer:?}");
     }
@@ -432,7 +437,8 @@ mod token {
 
         let data = "let foo=\"bar\"";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -442,7 +448,7 @@ mod token {
                 Token::Equal,
                 Token::QuotedString("bar")
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -452,7 +458,8 @@ mod token {
 
         let data = "let foo = \"bar\"";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -464,7 +471,7 @@ mod token {
                 Token::WhiteSpace,
                 Token::QuotedString("bar")
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -474,7 +481,8 @@ mod token {
 
         let data = "let foo=10";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -484,7 +492,7 @@ mod token {
                 Token::Equal,
                 Token::Number("10"),
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -494,7 +502,8 @@ mod token {
 
         let data = "let foo = 10";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -506,7 +515,7 @@ mod token {
                 Token::WhiteSpace,
                 Token::Number("10"),
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -516,7 +525,9 @@ mod token {
 
         let data = "let foo=10.0";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
+        info!("{tokens:?}");
 
         assert_eq!(
             [
@@ -526,7 +537,7 @@ mod token {
                 Token::Equal,
                 Token::Number("10.0"),
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -536,7 +547,8 @@ mod token {
 
         let data = "let foo = 10.0";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -548,7 +560,7 @@ mod token {
                 Token::WhiteSpace,
                 Token::Number("10.0"),
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -558,7 +570,8 @@ mod token {
 
         let data = "let foo=Foo{baz=0;}";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         info!("{:?}", tokenizer.tokens);
 
@@ -576,7 +589,7 @@ mod token {
                 Token::Semicolon,
                 Token::RightAngleBracket,
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -588,7 +601,8 @@ mod token {
         baz = 0;
         }";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -611,7 +625,7 @@ mod token {
                 Token::WhiteSpace,
                 Token::RightAngleBracket,
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -621,7 +635,9 @@ mod token {
 
         let data = "struct Foo{bar:i32,baz:i32,}";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
+        info!("{tokens:?}");
 
         assert_eq!(
             [
@@ -631,15 +647,15 @@ mod token {
                 Token::LeftAngleBracket,
                 Token::Str("bar"),
                 Token::Colon,
-                Token::Str("i32"),
+                Token::TypeID(TypeID::I32),
                 Token::Comma,
                 Token::Str("baz"),
                 Token::Colon,
-                Token::Str("i32"),
+                Token::TypeID(TypeID::I32),
                 Token::Comma,
                 Token::RightAngleBracket
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -652,7 +668,8 @@ mod token {
         baz:i32,
         }";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -665,17 +682,17 @@ mod token {
                 Token::Str("bar"),
                 Token::Colon,
                 Token::WhiteSpace,
-                Token::Str("i32"),
+                Token::TypeID(TypeID::I32),
                 Token::Comma,
                 Token::WhiteSpace,
                 Token::Str("baz"),
                 Token::Colon,
-                Token::Str("i32"),
+                Token::TypeID(TypeID::I32),
                 Token::Comma,
                 Token::WhiteSpace,
                 Token::RightAngleBracket
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -685,7 +702,8 @@ mod token {
 
         let data = "enum Foo{Bar,Baz,}";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -699,7 +717,7 @@ mod token {
                 Token::Comma,
                 Token::RightAngleBracket
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -712,7 +730,8 @@ mod token {
         Baz,
         }";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -730,7 +749,7 @@ mod token {
                 Token::WhiteSpace,
                 Token::RightAngleBracket
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -740,7 +759,8 @@ mod token {
 
         let data = "let foo=Foo::Urmom;";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         info!("{:?}", tokenizer.tokens);
 
@@ -756,7 +776,7 @@ mod token {
                 Token::Str("Urmom"),
                 Token::Semicolon
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
         );
     }
 
@@ -766,7 +786,8 @@ mod token {
 
         let data = "let foo = Foo::Urmom;";
 
-        let tokenizer = Tokenizer::new(data).tokenize();
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         info!("{:?}", tokenizer.tokens);
 
@@ -784,7 +805,69 @@ mod token {
                 Token::Str("Urmom"),
                 Token::Semicolon
             ],
-            tokenizer.tokens.as_slice()
+            tokens.as_slice()
+        );
+    }
+    #[test]
+    fn let_var_dot() {
+        setup_logger();
+
+        let data = "foo.bar";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = tokenizer.tokens;
+
+        assert_eq!(
+            [Token::Str("foo"), Token::Dot, Token::Str("bar")],
+            tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn let_var_dot_white_space() {
+        setup_logger();
+
+        let data = " foo.bar ";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = tokenizer.tokens;
+
+        assert_eq!(
+            [
+                Token::WhiteSpace,
+                Token::Str("foo"),
+                Token::Dot,
+                Token::Str("bar"),
+                Token::WhiteSpace
+            ],
+            tokens.as_slice()
+        );
+    }
+
+    #[test]
+    fn exclamation_mark() {
+        setup_logger();
+
+        let data = "!";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = tokenizer.tokens;
+
+        assert_eq!([Token::Exclamation], tokens.as_slice());
+    }
+
+    #[test]
+    fn exclamation_mark_whitespace() {
+        setup_logger();
+
+        let data = " ! ";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
+
+        assert_eq!(
+            [Token::WhiteSpace, Token::Exclamation, Token::WhiteSpace],
+            tokens.as_slice()
         );
     }
 
@@ -797,11 +880,12 @@ mod token {
             setup_logger();
             let data = "foo+bar";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Plus, Token::Str("bar")],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -810,11 +894,12 @@ mod token {
             setup_logger();
             let data = "foo+ ";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Plus, Token::WhiteSpace],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -822,12 +907,12 @@ mod token {
         fn sub() {
             setup_logger();
             let data = "foo-bar";
-
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Minus, Token::Str("bar")],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -836,11 +921,12 @@ mod token {
             setup_logger();
             let data = "foo- ";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Minus, Token::WhiteSpace],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -849,11 +935,12 @@ mod token {
             setup_logger();
             let data = "foo*bar";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Multiply, Token::Str("bar")],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -862,11 +949,13 @@ mod token {
             setup_logger();
             let data = "foo* ";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Multiply, Token::WhiteSpace],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -875,11 +964,12 @@ mod token {
             setup_logger();
             let data = "foo/bar";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Divide, Token::Str("bar")],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
 
@@ -888,11 +978,12 @@ mod token {
             setup_logger();
             let data = "foo/ ";
 
-            let tokenizer = Tokenizer::new(data).tokenize();
+            let tokenizer = Tokenizer::tokenize(data);
+            let tokens = tokenizer.tokens;
 
             assert_eq!(
                 [Token::Str("foo"), Token::Divide, Token::WhiteSpace],
-                tokenizer.tokens.as_slice()
+                tokens.as_slice()
             );
         }
     }

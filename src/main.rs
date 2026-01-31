@@ -1,41 +1,14 @@
-use crate::parser::Parser;
+use crate::{
+    parser::{ParseError, Parser},
+    tokenizer::Tokenizer,
+};
 
 mod parser;
 mod tokenizer;
+mod types;
 
-fn main() {
-    setup_logger().unwrap();
-    let data = r#"
-        struct Bar {
-            baz: i32,
-        }
+fn main() -> Result<(), ParseError> {
+    let _ = Parser::parse(Tokenizer::tokenize(""))?;
 
-        let baz = "foo";
-
-        let barf: [i32] = [1, 2, "foo",3];
-
-        let foo = Bar {
-        baz=1
-        };
-
-        "#;
-    let parser = Parser::new(data).parse();
-
-    log::info!("{parser:?}");
-}
-
-fn setup_logger() -> Result<(), fern::InitError> {
-    fern::Dispatch::new()
-        .format(|out, message, record| {
-            out.finish(format_args!(
-                "[{} {}] {}",
-                record.level(),
-                record.target(),
-                message
-            ))
-        })
-        .level(log::LevelFilter::Debug)
-        .chain(std::io::stdout())
-        .apply()?;
     Ok(())
 }
