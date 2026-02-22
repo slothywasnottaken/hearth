@@ -1,16 +1,16 @@
-#![allow(unused)]
 use std::fmt::Display;
 
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
     Let,
-    WhiteSpace,
     Equal,
     Semicolon,
     LeftAngleBracket,
     RightAngleBracket,
+    LeftCarrot,
+    RightCarrot,
     Colon,
     Comma,
     LeftBracket,
@@ -44,6 +44,9 @@ pub enum Token<'a> {
     If,
     Else,
 
+    True,
+    False,
+
     #[default]
     Unknown,
 }
@@ -54,6 +57,7 @@ impl Display for Token<'_> {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TypeID {
     I8,
@@ -69,12 +73,10 @@ pub enum TypeID {
     F32,
     F64,
 
+    Bool,
+
     String,
     QuotedString,
-    /// for structs (? idkkkkkkk)
-    Unknown,
-    Array,
-    Enum,
 }
 
 #[derive(Debug)]
@@ -98,6 +100,7 @@ impl TryFrom<&str> for TypeID {
             "u64" => Ok(TypeID::U64),
 
             "String" => Ok(TypeID::String),
+            "bool" => Ok(TypeID::Bool),
 
             _ => Err(TypeIDError::NotTypeID),
         }
@@ -143,16 +146,83 @@ pub struct Tokenizer<'a> {
     tokens: Vec<Token<'a>>,
 }
 
+#[derive(Debug)]
+pub struct TokenIterator<'a> {
+    data: &'a str,
+    idx: usize,
+}
+
+impl<'a> TokenIterator<'a> {
+    pub fn new(data: &'a str) -> Self {
+        Self { data, idx: 0 }
+    }
+}
+
+impl<'a> Iterator for TokenIterator<'a> {
+    type Item = (Token<'a>, Option<Token<'a>>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.data.len() {
+            return None;
+        }
+
+        let res = Tokenizer::next_token(&self.data[self.idx..]);
+
+        if let Some((idx, tok, peek)) = res {
+            self.idx += idx;
+            return Some((tok, peek));
+        }
+
+        None
+    }
+}
+
 impl<'a> Tokenizer<'a> {
-    pub fn tokens(&self) -> &[Token<'a>] {
-        &self.tokens
+    pub fn tokenize(data: &'a str) -> Self {
+        debug!("{data:?}");
+
+        let mut prev = Token::Unknown;
+        let mut tokens: Vec<Token> = vec![];
+        let iter = TokenIterator::new(data);
+
+        for (wrd, peek) in iter {
+            trace!("found {prev} {wrd} {peek:?}");
+            if wrd == Token::Unknown {
+                panic!("found unknown token");
+            }
+
+            if let Token::Str(s) = wrd {
+                let t = match s {
+                    "let" => Token::Let,
+                    "struct" => Token::Struct,
+                    "enum" => Token::Enum,
+                    "return" => Token::Return,
+                    "mut" => Token::Mutable,
+                    "pub" => Token::Pub,
+                    "if" => Token::If,
+                    "else" => Token::Else,
+                    "fn" => Token::Function,
+                    "true" => Token::True,
+                    "false" => Token::False,
+                    _ => wrd,
+                };
+
+                tokens.push(t);
+            } else {
+                tokens.push(wrd);
+            }
+            if let Some(peek) = peek {
+                tokens.push(peek);
+            }
+            prev = wrd;
+        }
+
+        Self { tokens }
     }
     /// works as an iterator, the number it returns is an increment amount, you can give it a big
     /// string and repeatedly call next() on it and just increment the start of your slice to get
     /// the next word
     fn next_token(source: &str) -> Option<(usize, Token<'_>, Option<Token<'_>>)> {
-        // info!("src: {source:?}");
-
         let mut ident: Option<Ident> = None;
         let mut quoted = false;
         for (i, ch) in source.char_indices() {
@@ -162,6 +232,9 @@ impl<'a> Tokenizer<'a> {
                         ident = Some(Ident::Word(i));
                     }
                 }
+                // else it falls to the default case and emits an error even though we're probably
+                // tokenizing something like foo_bar
+                '_' => {}
                 '+' => {
                     if let Some(iden) = ident {
                         return Some((i + 1, iden.into_str(source, i), Some(Token::Plus)));
@@ -249,18 +322,13 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 ' ' => {
-                    if ident.is_none() {
-                        return Some((i + 1, Token::WhiteSpace, None));
-                    }
                     if let Some(iden) = ident {
                         debug!(
                             "found {ch:?}: {:?}",
                             (i, Token::Str(source[iden.inner()..i + 1].trim()),)
                         );
 
-                        return Some((i + 1, iden.into_str(source, i), Some(Token::WhiteSpace)));
-                    } else {
-                        return Some((i + 1, Token::WhiteSpace, None));
+                        return Some((i + 1, iden.into_str(source, i), None));
                     }
                 }
                 '=' => {
@@ -302,7 +370,20 @@ impl<'a> Tokenizer<'a> {
                             Some(Token::RightAngleBracket),
                         ));
                     }
-                    return Some((i + 2, Token::RightAngleBracket, None));
+                    return Some((i + 1, Token::RightAngleBracket, None));
+                }
+
+                '<' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::LeftCarrot)));
+                    }
+                    return Some((i + 1, Token::LeftCarrot, None));
+                }
+                '>' => {
+                    if let Some(iden) = ident {
+                        return Some((i + 1, iden.into_str(source, i), Some(Token::RightCarrot)));
+                    }
+                    return Some((i + 1, Token::RightCarrot, None));
                 }
 
                 ';' => {
@@ -355,62 +436,13 @@ impl<'a> Tokenizer<'a> {
         None
     }
 
-    pub fn tokenize(data: &'a str) -> Self {
-        debug!("{data:?}");
-
-        let mut i = 0;
-        let mut prev = Token::Unknown;
-        let mut tokens: Vec<Token> = vec![];
-
-        loop {
-            if i >= data.len() {
-                break;
-            }
-            if let Some((inc, wrd, peek)) = Tokenizer::next_token(&data[i..]) {
-                // info!("found {prev} {wrd} {peek:?}");
-                if wrd == Token::Unknown {
-                    panic!("found unknown token");
-                }
-
-                if prev == Token::WhiteSpace && wrd == Token::WhiteSpace {
-                    i += 1;
-                    continue;
-                }
-                if let Token::Str(s) = wrd {
-                    let t = match s {
-                        "let" => Token::Let,
-                        "struct" => Token::Struct,
-                        "enum" => Token::Enum,
-                        "return" => Token::Return,
-                        "mut" => Token::Mutable,
-                        "pub" => Token::Pub,
-                        "if" => Token::If,
-                        "else" => Token::Else,
-                        "fn" => Token::Function,
-                        _ => wrd,
-                    };
-
-                    tokens.push(t);
-                } else {
-                    tokens.push(wrd);
-                }
-                // info!("word: {wrd:?} {peek:?}");
-                if let Some(peek) = peek {
-                    tokens.push(peek);
-                }
-                prev = wrd;
-                i += inc;
-            }
-        }
-
-        Self { tokens }
+    pub fn tokens(&self) -> &[Token<'a>] {
+        &self.tokens
     }
 }
 
 #[cfg(test)]
 mod token {
-    use tracing::info;
-
     use crate::tokenizer::{Token, Tokenizer, TypeID};
 
     fn setup_logger() {
@@ -426,9 +458,7 @@ mod token {
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
-        assert_eq!([Token::Let, Token::WhiteSpace], tokens.as_slice());
-
-        info!("{tokenizer:?}");
+        assert_eq!([Token::Let], tokens.as_slice());
     }
 
     #[test]
@@ -443,7 +473,6 @@ mod token {
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
                 Token::Equal,
                 Token::QuotedString("bar")
@@ -464,11 +493,8 @@ mod token {
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
-                Token::WhiteSpace,
                 Token::Equal,
-                Token::WhiteSpace,
                 Token::QuotedString("bar")
             ],
             tokens.as_slice()
@@ -487,7 +513,6 @@ mod token {
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
                 Token::Equal,
                 Token::Number("10"),
@@ -508,11 +533,8 @@ mod token {
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
-                Token::WhiteSpace,
                 Token::Equal,
-                Token::WhiteSpace,
                 Token::Number("10"),
             ],
             tokens.as_slice()
@@ -527,12 +549,10 @@ mod token {
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
-        info!("{tokens:?}");
 
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
                 Token::Equal,
                 Token::Number("10.0"),
@@ -553,11 +573,8 @@ mod token {
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
-                Token::WhiteSpace,
                 Token::Equal,
-                Token::WhiteSpace,
                 Token::Number("10.0"),
             ],
             tokens.as_slice()
@@ -573,12 +590,9 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!("{:?}", tokenizer.tokens);
-
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
                 Token::Equal,
                 Token::Str("Foo"),
@@ -607,22 +621,14 @@ mod token {
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
-                Token::WhiteSpace,
                 Token::Equal,
-                Token::WhiteSpace,
                 Token::Str("Foo"),
-                Token::WhiteSpace,
                 Token::LeftAngleBracket,
-                Token::WhiteSpace,
                 Token::Str("baz"),
-                Token::WhiteSpace,
                 Token::Equal,
-                Token::WhiteSpace,
                 Token::Number("0"),
                 Token::Semicolon,
-                Token::WhiteSpace,
                 Token::RightAngleBracket,
             ],
             tokens.as_slice()
@@ -637,12 +643,10 @@ mod token {
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
-        info!("{tokens:?}");
 
         assert_eq!(
             [
                 Token::Struct,
-                Token::WhiteSpace,
                 Token::Str("Foo"),
                 Token::LeftAngleBracket,
                 Token::Str("bar"),
@@ -674,22 +678,16 @@ mod token {
         assert_eq!(
             [
                 Token::Struct,
-                Token::WhiteSpace,
                 Token::Str("Foo"),
-                Token::WhiteSpace,
                 Token::LeftAngleBracket,
-                Token::WhiteSpace,
                 Token::Str("bar"),
                 Token::Colon,
-                Token::WhiteSpace,
                 Token::TypeID(TypeID::I32),
                 Token::Comma,
-                Token::WhiteSpace,
                 Token::Str("baz"),
                 Token::Colon,
                 Token::TypeID(TypeID::I32),
                 Token::Comma,
-                Token::WhiteSpace,
                 Token::RightAngleBracket
             ],
             tokens.as_slice()
@@ -708,7 +706,6 @@ mod token {
         assert_eq!(
             [
                 Token::Enum,
-                Token::WhiteSpace,
                 Token::Str("Foo"),
                 Token::LeftAngleBracket,
                 Token::Str("Bar"),
@@ -736,17 +733,12 @@ mod token {
         assert_eq!(
             [
                 Token::Enum,
-                Token::WhiteSpace,
                 Token::Str("Foo"),
-                Token::WhiteSpace,
                 Token::LeftAngleBracket,
-                Token::WhiteSpace,
                 Token::Str("Bar"),
                 Token::Comma,
-                Token::WhiteSpace,
                 Token::Str("Baz"),
                 Token::Comma,
-                Token::WhiteSpace,
                 Token::RightAngleBracket
             ],
             tokens.as_slice()
@@ -762,12 +754,9 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!("{:?}", tokenizer.tokens);
-
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
                 Token::Equal,
                 Token::Str("Foo"),
@@ -789,16 +778,11 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!("{:?}", tokenizer.tokens);
-
         assert_eq!(
             [
                 Token::Let,
-                Token::WhiteSpace,
                 Token::Str("foo"),
-                Token::WhiteSpace,
                 Token::Equal,
-                Token::WhiteSpace,
                 Token::Str("Foo"),
                 Token::Colon,
                 Token::Colon,
@@ -833,13 +817,7 @@ mod token {
         let tokens = tokenizer.tokens;
 
         assert_eq!(
-            [
-                Token::WhiteSpace,
-                Token::Str("foo"),
-                Token::Dot,
-                Token::Str("bar"),
-                Token::WhiteSpace
-            ],
+            [Token::Str("foo"), Token::Dot, Token::Str("bar"),],
             tokens.as_slice()
         );
     }
@@ -865,10 +843,7 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        assert_eq!(
-            [Token::WhiteSpace, Token::Exclamation, Token::WhiteSpace],
-            tokens.as_slice()
-        );
+        assert_eq!([Token::Exclamation], tokens.as_slice());
     }
 
     #[cfg(test)]
@@ -897,10 +872,7 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            assert_eq!(
-                [Token::Str("foo"), Token::Plus, Token::WhiteSpace],
-                tokens.as_slice()
-            );
+            assert_eq!([Token::Str("foo"), Token::Plus,], tokens.as_slice());
         }
 
         #[test]
@@ -924,10 +896,7 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            assert_eq!(
-                [Token::Str("foo"), Token::Minus, Token::WhiteSpace],
-                tokens.as_slice()
-            );
+            assert_eq!([Token::Str("foo"), Token::Minus,], tokens.as_slice());
         }
 
         #[test]
@@ -953,10 +922,7 @@ mod token {
 
             let tokens = tokenizer.tokens;
 
-            assert_eq!(
-                [Token::Str("foo"), Token::Multiply, Token::WhiteSpace],
-                tokens.as_slice()
-            );
+            assert_eq!([Token::Str("foo"), Token::Multiply], tokens.as_slice());
         }
 
         #[test]
@@ -981,10 +947,7 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            assert_eq!(
-                [Token::Str("foo"), Token::Divide, Token::WhiteSpace],
-                tokens.as_slice()
-            );
+            assert_eq!([Token::Str("foo"), Token::Divide], tokens.as_slice());
         }
     }
 }
