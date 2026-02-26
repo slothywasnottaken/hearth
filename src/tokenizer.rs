@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
@@ -107,7 +107,7 @@ impl TryFrom<&str> for TypeID {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum Ident {
     Word(usize),
     Number(usize),
@@ -223,7 +223,7 @@ impl<'a> Tokenizer<'a> {
                     _ => (Span::new(span.start, span.end), wrd),
                 };
 
-                info!(?new_span, ?t);
+                trace!(?new_span, ?t);
                 tokens.push((new_span, t));
             } else {
                 tokens.push((span, wrd));
@@ -237,7 +237,7 @@ impl<'a> Tokenizer<'a> {
     /// works as an iterator, the number it returns is an increment amount, you can give it a big
     /// string and repeatedly call next() on it and just increment the start of your slice to get
     /// the next word
-    #[instrument(skip_all, ret)]
+    // #[instrument(skip_all, ret)]
     fn next_token(source: &str) -> Option<(Span, Token<'_>)> {
         let mut ident: Option<Ident> = None;
         let mut quoted = false;
@@ -245,7 +245,7 @@ impl<'a> Tokenizer<'a> {
             match ch {
                 'A'..='Z' | 'a'..='z' => {
                     if ident.is_none() {
-                        info!(?i, ?ch);
+                        trace!(?i, ?ch);
                         ident = Some(Ident::Word(i));
                     }
                 }
@@ -345,6 +345,40 @@ impl<'a> Tokenizer<'a> {
                     }
                     None => return Some((Span::new(i, i + 1), Token::Divide)),
                 },
+                '.' => match ident {
+                    Some(iden) => match iden {
+                        // if number dont return here because if its 10.0 it would return 10
+                        Ident::Number(_n) => continue,
+                        Ident::Word(_w) => {
+                            return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
+                        }
+                    },
+                    None => return Some((Span::new(i, i + 1), Token::Dot)),
+                },
+                '[' => match ident {
+                    Some(iden) => {
+                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
+                    }
+                    None => return Some((Span::new(i, i + 1), Token::LeftBracket)),
+                },
+                ']' => match ident {
+                    Some(iden) => {
+                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
+                    }
+                    None => return Some((Span::new(i, i + 1), Token::RightBracket)),
+                },
+                '<' => match ident {
+                    Some(iden) => {
+                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
+                    }
+                    None => return Some((Span::new(i, i + 1), Token::LeftCarrot)),
+                },
+                '>' => match ident {
+                    Some(iden) => {
+                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
+                    }
+                    None => return Some((Span::new(i, i + 1), Token::RightCarrot)),
+                },
 
                 '\n' => {
                     if let Some(iden) = ident {
@@ -400,7 +434,7 @@ impl<'a> Tokenizer<'a> {
 mod token {
     use tracing::info;
 
-    use crate::tokenizer::{Span, Token, Tokenizer};
+    use crate::tokenizer::{Span, Token, Tokenizer, TypeID};
 
     fn setup_logger() {
         let _guard =
@@ -416,10 +450,6 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        for (span, _) in tokens {
-            info!("source index {:?}", &data[span.start..span.end]);
-        }
-
         assert_eq!([(Span::new(0, 3), Token::Let)], tokens.as_slice());
     }
 
@@ -431,9 +461,6 @@ mod token {
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
-        for (span, _) in tokens {
-            info!("source index {:?}", &data[span.start..span.end]);
-        }
 
         assert_eq!(
             [
@@ -446,7 +473,7 @@ mod token {
         );
     }
 
-    #[ignore]
+    #[test]
     fn let_var_string_whitespace() {
         setup_logger();
 
@@ -457,10 +484,10 @@ mod token {
 
         assert_eq!(
             [
-                (Span::new(0, 2), Token::Let),
-                (Span::new(4, 6), Token::Str("foo")),
-                (Span::new(7, 7), Token::Equal),
-                (Span::new(10, 12), Token::QuotedString("bar"))
+                (Span::new(0, 3), Token::Let),
+                (Span::new(4, 7), Token::Str("foo")),
+                (Span::new(8, 9), Token::Equal),
+                (Span::new(11, 14), Token::QuotedString("bar"))
             ],
             tokens.as_slice()
         );
@@ -495,10 +522,6 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        for (span, _) in tokens {
-            info!("source index {:?}", &data[span.start..span.end]);
-        }
-
         assert_eq!(
             [
                 (Span::new(0, 3), Token::Let),
@@ -519,11 +542,25 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
+        assert_eq!(
+            [
+                (Span::new(0, 3), Token::Let),
+                (Span::new(4, 7), Token::Str("foo")),
+                (Span::new(8, 9), Token::Equal),
+                (Span::new(10, 14), Token::Number("10.0")),
+            ],
+            tokens.as_slice()
+        );
+    }
 
-        for (span, _) in tokens {
-            info!("source index {:?}", &data[span.start..span.end]);
-        }
+    #[test]
+    fn let_var_float_whitespace() {
+        setup_logger();
+
+        let data = "let foo = 10.0";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
@@ -536,52 +573,31 @@ mod token {
         );
     }
 
-    #[ignore]
-    fn let_var_float_whitespace() {
+    #[test]
+    fn let_var_struct() {
         setup_logger();
 
-        let data = "let foo = 10.0";
+        let data = "let foo=Foo{baz=0,};";
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
         assert_eq!(
             [
-                (Span::new(0, 2), Token::Let),
-                (Span::new(4, 6), Token::Str("foo")),
-                (Span::new(7, 7), Token::Equal),
-                (Span::new(8, 11), Token::Number("10.0")),
+                (Span::new(0, 3), Token::Let),
+                (Span::new(4, 7), Token::Str("foo")),
+                (Span::new(7, 8), Token::Equal),
+                (Span::new(8, 11), Token::Str("Foo")),
+                (Span::new(11, 12), Token::LeftAngleBracket),
+                (Span::new(12, 15), Token::Str("baz")),
+                (Span::new(15, 16), Token::Equal),
+                (Span::new(16, 17), Token::Number("0")),
+                (Span::new(17, 18), Token::Comma),
+                (Span::new(18, 19), Token::RightAngleBracket),
+                (Span::new(19, 20), Token::Semicolon),
             ],
             tokens.as_slice()
         );
-    }
-
-    #[test]
-    fn let_var_struct() {
-        setup_logger();
-
-        let data = "let foo=Foo{baz=0;}";
-
-        let tokenizer = Tokenizer::tokenize(data);
-        let tokens = &tokenizer.tokens;
-
-        info!(?tokens);
-
-        // assert_eq!(
-        //     [
-        //         Token::Let,
-        //         Token::Str("foo"),
-        //         Token::Equal,
-        //         Token::Str("Foo"),
-        //         Token::LeftAngleBracket,
-        //         Token::Str("baz"),
-        //         Token::Equal,
-        //         Token::Number("0"),
-        //         Token::Semicolon,
-        //         Token::RightAngleBracket,
-        //     ],
-        //     tokens.as_slice()
-        // );
     }
 
     #[test]
@@ -589,28 +605,28 @@ mod token {
         setup_logger();
 
         let data = "let foo = Foo {
-        baz = 0;
-        }";
+        baz = 0,
+        };";
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!(
-        //     [
-        //         Token::Let,
-        //         Token::Str("foo"),
-        //         Token::Equal,
-        //         Token::Str("Foo"),
-        //         Token::LeftAngleBracket,
-        //         Token::Str("baz"),
-        //         Token::Equal,
-        //         Token::Number("0"),
-        //         Token::Semicolon,
-        //         Token::RightAngleBracket,
-        //     ],
-        //     tokens.as_slice()
-        // );
+        assert_eq!(
+            [
+                (Span::new(0, 3), Token::Let),
+                (Span::new(4, 7), Token::Str("foo")),
+                (Span::new(8, 9), Token::Equal),
+                (Span::new(10, 13), Token::Str("Foo")),
+                (Span::new(14, 15), Token::LeftAngleBracket),
+                (Span::new(24, 27), Token::Str("baz")),
+                (Span::new(28, 29), Token::Equal),
+                (Span::new(30, 31), Token::Number("0")),
+                (Span::new(31, 32), Token::Comma),
+                (Span::new(41, 42), Token::RightAngleBracket),
+                (Span::new(42, 43), Token::Semicolon),
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -622,24 +638,23 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        //     assert_eq!(
-        //         [
-        //             Token::Struct,
-        //             Token::Str("Foo"),
-        //             Token::LeftAngleBracket,
-        //             Token::Str("bar"),
-        //             Token::Colon,
-        //             Token::TypeID(TypeID::I32),
-        //             Token::Comma,
-        //             Token::Str("baz"),
-        //             Token::Colon,
-        //             Token::TypeID(TypeID::I32),
-        //             Token::Comma,
-        //             Token::RightAngleBracket
-        //         ],
-        //         tokens.as_slice()
-        //     );
+        assert_eq!(
+            [
+                (Span::new(0, 6), Token::Struct),
+                (Span::new(7, 10), Token::Str("Foo")),
+                (Span::new(10, 11), Token::LeftAngleBracket),
+                (Span::new(11, 14), Token::Str("bar")),
+                (Span::new(14, 15), Token::Colon),
+                (Span::new(15, 18), Token::TypeID(TypeID::I32)),
+                (Span::new(18, 19), Token::Comma),
+                (Span::new(19, 22), Token::Str("baz")),
+                (Span::new(22, 23), Token::Colon),
+                (Span::new(23, 26), Token::TypeID(TypeID::I32)),
+                (Span::new(26, 27), Token::Comma),
+                (Span::new(27, 28), Token::RightAngleBracket),
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -648,30 +663,29 @@ mod token {
 
         let data = "struct Foo {
         bar: i32,
-        baz:i32,
+        baz: i32,
         }";
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!(
-        //     [
-        //         Token::Struct,
-        //         Token::Str("Foo"),
-        //         Token::LeftAngleBracket,
-        //         Token::Str("bar"),
-        //         Token::Colon,
-        //         Token::TypeID(TypeID::I32),
-        //         Token::Comma,
-        //         Token::Str("baz"),
-        //         Token::Colon,
-        //         Token::TypeID(TypeID::I32),
-        //         Token::Comma,
-        //         Token::RightAngleBracket
-        //     ],
-        //     tokens.as_slice()
-        // );
+        assert_eq!(
+            [
+                (Span::new(0, 6), Token::Struct),
+                (Span::new(7, 10), Token::Str("Foo")),
+                (Span::new(11, 12), Token::LeftAngleBracket),
+                (Span::new(21, 24), Token::Str("bar")),
+                (Span::new(24, 25), Token::Colon),
+                (Span::new(26, 29), Token::TypeID(TypeID::I32)),
+                (Span::new(29, 30), Token::Comma),
+                (Span::new(39, 42), Token::Str("baz")),
+                (Span::new(42, 43), Token::Colon),
+                (Span::new(44, 47), Token::TypeID(TypeID::I32)),
+                (Span::new(47, 48), Token::Comma),
+                (Span::new(57, 58), Token::RightAngleBracket),
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -683,20 +697,19 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!(
-        //     [
-        //         Token::Enum,
-        //         Token::Str("Foo"),
-        //         Token::LeftAngleBracket,
-        //         Token::Str("Bar"),
-        //         Token::Comma,
-        //         Token::Str("Baz"),
-        //         Token::Comma,
-        //         Token::RightAngleBracket
-        //     ],
-        //     tokens.as_slice()
-        // );
+        assert_eq!(
+            [
+                (Span::new(0, 4), Token::Enum),
+                (Span::new(5, 8), Token::Str("Foo")),
+                (Span::new(8, 9), Token::LeftAngleBracket),
+                (Span::new(9, 12), Token::Str("Bar")),
+                (Span::new(12, 13), Token::Comma),
+                (Span::new(13, 16), Token::Str("Baz")),
+                (Span::new(16, 17), Token::Comma),
+                (Span::new(17, 18), Token::RightAngleBracket)
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -711,20 +724,19 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!(
-        //     [
-        //         Token::Enum,
-        //         Token::Str("Foo"),
-        //         Token::LeftAngleBracket,
-        //         Token::Str("Bar"),
-        //         Token::Comma,
-        //         Token::Str("Baz"),
-        //         Token::Comma,
-        //         Token::RightAngleBracket
-        //     ],
-        //     tokens.as_slice()
-        // );
+        assert_eq!(
+            [
+                (Span::new(0, 4), Token::Enum),
+                (Span::new(5, 8), Token::Str("Foo")),
+                (Span::new(9, 10), Token::LeftAngleBracket),
+                (Span::new(19, 22), Token::Str("Bar")),
+                (Span::new(22, 23), Token::Comma),
+                (Span::new(32, 35), Token::Str("Baz")),
+                (Span::new(35, 36), Token::Comma),
+                (Span::new(45, 46), Token::RightAngleBracket)
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -735,21 +747,19 @@ mod token {
 
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
-        info!(?tokens);
-
-        //     assert_eq!(
-        //         [
-        //             Token::Let,
-        //             Token::Str("foo"),
-        //             Token::Equal,
-        //             Token::Str("Foo"),
-        //             Token::Colon,
-        //             Token::Colon,
-        //             Token::Str("Urmom"),
-        //             Token::Semicolon
-        //         ],
-        //         tokens.as_slice()
-        //     );
+        assert_eq!(
+            [
+                (Span::new(0, 3), Token::Let),
+                (Span::new(4, 7), Token::Str("foo")),
+                (Span::new(7, 8), Token::Equal),
+                (Span::new(8, 11), Token::Str("Foo")),
+                (Span::new(11, 12), Token::Colon),
+                (Span::new(12, 13), Token::Colon),
+                (Span::new(13, 18), Token::Str("Urmom")),
+                (Span::new(18, 19), Token::Semicolon),
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -761,20 +771,19 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        //     assert_eq!(
-        //         [
-        //             Token::Let,
-        //             Token::Str("foo"),
-        //             Token::Equal,
-        //             Token::Str("Foo"),
-        //             Token::Colon,
-        //             Token::Colon,
-        //             Token::Str("Urmom"),
-        //             Token::Semicolon
-        //         ],
-        //         tokens.as_slice()
-        //     );
+        assert_eq!(
+            [
+                (Span::new(0, 3), Token::Let),
+                (Span::new(4, 7), Token::Str("foo")),
+                (Span::new(8, 9), Token::Equal),
+                (Span::new(10, 13), Token::Str("Foo")),
+                (Span::new(13, 14), Token::Colon),
+                (Span::new(14, 15), Token::Colon),
+                (Span::new(15, 20), Token::Str("Urmom")),
+                (Span::new(20, 21), Token::Semicolon),
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -786,11 +795,14 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!(
-        //     [Token::Str("foo"), Token::Dot, Token::Str("bar")],
-        //     tokens.as_slice()
-        // );
+        assert_eq!(
+            [
+                (Span::new(0, 3), Token::Str("foo")),
+                (Span::new(3, 4), Token::Dot),
+                (Span::new(4, 7), Token::Str("bar"))
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -802,11 +814,14 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!(
-        //     [Token::Str("foo"), Token::Dot, Token::Str("bar"),],
-        //     tokens.as_slice()
-        // );
+        assert_eq!(
+            [
+                (Span::new(1, 4), Token::Str("foo")),
+                (Span::new(4, 5), Token::Dot),
+                (Span::new(5, 8), Token::Str("bar"))
+            ],
+            tokens.as_slice()
+        );
     }
 
     #[test]
@@ -818,8 +833,7 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!([Token::Exclamation], tokens.as_slice());
+        assert_eq!([(Span::new(0, 1), Token::Exclamation)], tokens.as_slice());
     }
 
     #[test]
@@ -831,15 +845,62 @@ mod token {
         let tokenizer = Tokenizer::tokenize(data);
         let tokens = &tokenizer.tokens;
 
-        info!(?tokens);
-        // assert_eq!([Token::Exclamation], tokens.as_slice());
+        assert_eq!([(Span::new(1, 2), Token::Exclamation)], tokens.as_slice());
+    }
+
+    #[test]
+    fn left_carrot() {
+        setup_logger();
+
+        let data = "<";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = tokenizer.tokens;
+
+        assert_eq!([(Span::new(0, 1), Token::LeftCarrot)], tokens.as_slice());
+    }
+
+    #[test]
+    fn left_carrot_whitespace() {
+        setup_logger();
+
+        let data = " < ";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
+
+        assert_eq!([(Span::new(1, 2), Token::LeftCarrot)], tokens.as_slice());
+    }
+
+    #[test]
+    fn right_carrot() {
+        setup_logger();
+
+        let data = ">";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = tokenizer.tokens;
+
+        assert_eq!([(Span::new(0, 1), Token::RightCarrot)], tokens.as_slice());
+    }
+
+    #[test]
+    fn right_carrot_whitespace() {
+        setup_logger();
+
+        let data = " > ";
+
+        let tokenizer = Tokenizer::tokenize(data);
+        let tokens = &tokenizer.tokens;
+
+        assert_eq!([(Span::new(1, 2), Token::RightCarrot)], tokens.as_slice());
     }
 
     #[cfg(test)]
     mod ops {
         use tracing::info;
 
-        use crate::tokenizer::{Token, Tokenizer, token::setup_logger};
+        use crate::tokenizer::{Span, Token, Tokenizer, token::setup_logger};
 
         #[test]
         fn add() {
@@ -849,11 +910,14 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!(
-            //     [Token::Str("foo"), Token::Plus, Token::Str("bar")],
-            //     tokens.as_slice()
-            // );
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Plus),
+                    (Span::new(4, 7), Token::Str("bar"))
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -864,8 +928,13 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!([Token::Str("foo"), Token::Plus,], tokens.as_slice());
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Plus)
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -875,11 +944,14 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!(
-            //     [Token::Str("foo"), Token::Minus, Token::Str("bar")],
-            //     tokens.as_slice()
-            // );
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Minus),
+                    (Span::new(4, 7), Token::Str("bar"))
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -890,8 +962,13 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!([Token::Str("foo"), Token::Minus,], tokens.as_slice());
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Minus)
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -902,11 +979,14 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!(
-            //     [Token::Str("foo"), Token::Multiply, Token::Str("bar")],
-            //     tokens.as_slice()
-            // );
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Multiply),
+                    (Span::new(4, 7), Token::Str("bar"))
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -918,8 +998,13 @@ mod token {
 
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!([Token::Str("foo"), Token::Multiply], tokens.as_slice());
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Multiply)
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -930,11 +1015,14 @@ mod token {
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
 
-            info!(?tokens);
-            // assert_eq!(
-            //     [Token::Str("foo"), Token::Divide, Token::Str("bar")],
-            //     tokens.as_slice()
-            // );
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Divide),
+                    (Span::new(4, 7), Token::Str("bar"))
+                ],
+                tokens.as_slice()
+            );
         }
 
         #[test]
@@ -944,9 +1032,14 @@ mod token {
 
             let tokenizer = Tokenizer::tokenize(data);
             let tokens = tokenizer.tokens;
-            info!(?tokens);
 
-            // assert_eq!([Token::Str("foo"), Token::Divide], tokens.as_slice());
+            assert_eq!(
+                [
+                    (Span::new(0, 3), Token::Str("foo")),
+                    (Span::new(3, 4), Token::Divide)
+                ],
+                tokens.as_slice()
+            );
         }
     }
 }

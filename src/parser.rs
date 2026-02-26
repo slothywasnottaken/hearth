@@ -381,7 +381,7 @@ mod parseable {
                     crate::types::ComplexType::Known(complex_type_decl) => {
                         match complex_type_decl {
                             ComplexTypeDecl::StructDecl(struct_decl) => {
-                                // info!(?struct_decl)
+                                info!(?struct_decl)
                             }
                             ComplexTypeDecl::Enum(enum_decl) => todo!(),
                         }
