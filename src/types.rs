@@ -8,11 +8,11 @@ use std::{
     ops::Add,
 };
 
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::{
     parser::{ParseError, ParseResult},
-    tokenizer::Token,
+    tokenizer::{Span, Token},
 };
 
 #[derive(Debug, Clone)]
@@ -420,8 +420,8 @@ impl<'a> Primitive<'a> {
     }
 
     #[instrument(name = "Primitive::parse", skip_all, err)]
-    pub fn parse(tokens: &[Token<'a>]) -> ParseResult<(Self, usize)> {
-        match tokens[0] {
+    pub fn parse(tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
+        match tokens[0].1 {
             Token::Number(n) => match n.contains('.') {
                 true => match n.parse::<f64>() {
                     Ok(f) => Ok((Primitive::Number(Number::F64(f)), 1)),
@@ -441,11 +441,14 @@ impl<'a> Primitive<'a> {
     }
 
     #[instrument(name = "Primitive::parse_ctx", skip_all, err)]
-    pub fn parse_ctx(ctx: &Option<TypeID>, tokens: &[Token<'a>]) -> ParseResult<(Self, usize)> {
+    pub fn parse_ctx(
+        ctx: &Option<TypeID>,
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Self, usize)> {
         match ctx {
             None => Self::parse(tokens),
             Some(id) => {
-                match (tokens[0], id) {
+                match (tokens[0].1, id) {
                     (Token::Number(num), TypeID::Primitive(primitive_id)) => {
                         return Ok((
                             Primitive::Number(match primitive_id {
@@ -606,7 +609,10 @@ pub(crate) struct Enum {
 
 impl Enum {
     #[instrument(name = "Enum::parse_ctx", skip_all, err)]
-    pub fn parse_ctx<'a>(ctx: &Typer<'a>, tokens: &[Token<'a>]) -> ParseResult<(Self, usize)> {
+    pub fn parse_ctx<'a>(
+        ctx: &Typer<'a>,
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Self, usize)> {
         enum State {
             Name,
             Ident,
@@ -617,7 +623,7 @@ impl Enum {
         let mut left = None;
         let mut field = None;
 
-        for (i, token) in tokens.iter().enumerate() {
+        for (i, (span, token)) in tokens.iter().enumerate() {
             match state {
                 State::Name => match token {
                     Token::Str(s) => {
@@ -697,7 +703,7 @@ impl<'a> StructDecl<'a> {
     #[instrument(name = "StructDecl::parse_ctx_mut", skip_all, err)]
     pub fn parse_ctx_mut(
         ctx: &mut Typer<'a>,
-        tokens: &[Token<'a>],
+        tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(&'a str, Self, usize)> {
         enum State {
             StructDecl,
@@ -711,7 +717,7 @@ impl<'a> StructDecl<'a> {
         let mut name = None;
         let mut ident = None;
 
-        for (i, token) in tokens.iter().enumerate() {
+        for (i, (span, token)) in tokens.iter().enumerate() {
             match state {
                 State::StructDecl => match token {
                     Token::Struct => {
@@ -732,7 +738,10 @@ impl<'a> StructDecl<'a> {
                 },
                 State::Ident => match token {
                     Token::Str(s) => {
-                        assert!(ident.is_none());
+                        if ident.is_some() {
+                            error!(?ident);
+                            assert!(ident.is_none());
+                        }
                         ident = Some(s);
                     }
                     Token::Colon => {
@@ -853,7 +862,7 @@ impl<'a> Struct<'a> {
     }
 
     #[instrument(name = "Struct::parse_ctx", skip_all, err)]
-    pub fn parse_ctx(ctx: &Typer, tokens: &[Token<'a>]) -> ParseResult<(Self, usize)> {
+    pub fn parse_ctx(ctx: &Typer, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
             Name,
@@ -871,7 +880,7 @@ impl<'a> Struct<'a> {
 
         let mut field_name = None;
 
-        while let Some(token) = tokens.get(i) {
+        while let Some((span, token)) = tokens.get(i) {
             debug!(?state, ?token);
             match state {
                 State::Name => match token {
@@ -892,9 +901,9 @@ impl<'a> Struct<'a> {
                     Token::Str(s) => {
                         stack.last_mut().unwrap().pending_name = Some(s);
 
-                        if let Some(Token::Colon) = tokens.get(i + 1)
-                            && let Some(Token::Str(typ)) = tokens.get(i + 2)
-                            && let Some(Token::LeftAngleBracket) = tokens.get(i + 3)
+                        if let Some((_, Token::Colon)) = tokens.get(i + 1)
+                            && let Some((_, Token::Str(typ))) = tokens.get(i + 2)
+                            && let Some((_, Token::LeftAngleBracket)) = tokens.get(i + 3)
                         {
                             stack.push(Frame {
                                 pending_name: None,
@@ -930,7 +939,7 @@ impl<'a> Struct<'a> {
                         i += 1;
                     }
                     Token::QuotedString(_s) | Token::Number(_s) => {
-                        let (val, inc) = Primitive::parse(&[*token])?;
+                        let (val, inc) = Primitive::parse(&[(*span, *token)])?;
                         stack
                             .last_mut()
                             .unwrap()
@@ -960,7 +969,7 @@ pub(crate) struct EnumDecl<'a> {
 
 impl<'a> EnumDecl<'a> {
     #[instrument(name = "EnumDecl::parse", skip_all, err)]
-    pub fn parse(tokens: &[Token<'a>]) -> ParseResult<(&'a str, Self, usize)> {
+    pub fn parse(tokens: &[(Span, Token<'a>)]) -> ParseResult<(&'a str, Self, usize)> {
         #[derive(Debug)]
         enum State {
             Enum,
@@ -973,7 +982,7 @@ impl<'a> EnumDecl<'a> {
         let mut ident = None;
         let mut decl = EnumDecl::default();
 
-        for (i, token) in tokens.iter().enumerate() {
+        for (i, (span, token)) in tokens.iter().enumerate() {
             match state {
                 State::Enum => match token {
                     Token::Pub => decl.visibility = Visibility::Pub,
@@ -1092,7 +1101,7 @@ pub(crate) struct FunctionDecl<'a> {
 
 impl<'a> FunctionDecl<'a> {
     #[instrument(name = "FunctionDecl::parse_ctx", skip_all, err)]
-    fn parse_ctx(ctx: &Typer<'a>, tokens: &[Token<'a>]) -> ParseResult<(Self, usize)> {
+    fn parse_ctx(ctx: &Typer<'a>, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
             Fn,
@@ -1113,7 +1122,7 @@ impl<'a> FunctionDecl<'a> {
         let mut i = 0;
 
         loop {
-            let Some(token) = tokens.get(i) else {
+            let Some((span, token)) = tokens.get(i) else {
                 break;
             };
 
@@ -1390,7 +1399,7 @@ pub(crate) struct FunctionCall<'a> {
 
 impl<'a> FunctionCall<'a> {
     #[instrument(name = "FunctionCall::parse_ctx", skip_all, err)]
-    pub fn parse_ctx(_ctx: &(), tokens: &[Token<'a>]) -> ParseResult<(Self, usize)> {
+    pub fn parse_ctx(_ctx: &(), tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
             Name,
@@ -1402,7 +1411,7 @@ impl<'a> FunctionCall<'a> {
         let mut state = State::Name;
         let mut needs_comma = false;
 
-        for (i, token) in tokens.iter().enumerate() {
+        for (i, (span, token)) in tokens.iter().enumerate() {
             match state {
                 State::Name => match token {
                     Token::Str(s) => {
@@ -1529,7 +1538,7 @@ impl TypeDecl {
     #[instrument(name = "TypeDecl::parse_ctx_mut", skip_all, err)]
     pub fn parse_ctx_mut<'a>(
         ctx: &mut Typer<'a>,
-        tokens: &[Token<'a>],
+        tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(
         Option<&'a str>,
         TypeDeclReturn<'a>,
@@ -1537,26 +1546,26 @@ impl TypeDecl {
         usize,
     )> {
         let mut start = 0;
-        let vis = if tokens[0] == Token::Pub {
+        let vis = if tokens[0].1 == Token::Pub {
             start = 1;
             Visibility::Pub
         } else {
             Visibility::Private
         };
         match tokens[start] {
-            Token::Function => {
+            (_, Token::Function) => {
                 let (mut decl, i) = FunctionDecl::parse_ctx(ctx, tokens)?;
                 decl.visibility = vis;
 
                 Ok((None, TypeDeclReturn::Function(decl), None, i))
             }
-            Token::Struct => {
+            (_, Token::Struct) => {
                 let (name, mut decl, i) = StructDecl::parse_ctx_mut(ctx, tokens)?;
                 decl.visibility = vis;
 
                 Ok((Some(name), TypeDeclReturn::Struct(decl), None, i))
             }
-            Token::Enum => {
+            (_, Token::Enum) => {
                 let (name, mut decl, i) = EnumDecl::parse(tokens)?;
                 decl.visibility = vis;
 
@@ -1578,7 +1587,7 @@ impl<'a> VariableValue<'a> {
     #[instrument(name = "VariableValue::parse_ctx", skip_all, ret)]
     pub fn parse_ctx(
         ctx: &(Option<TypeID>, Typer<'a>),
-        tokens: &[Token<'a>],
+        tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
@@ -1592,7 +1601,7 @@ impl<'a> VariableValue<'a> {
         let mut i = 0;
         info!(?tokens);
 
-        while let Some(token) = tokens.get(i) {
+        while let Some((span, token)) = tokens.get(i) {
             match token {
                 Token::Str(s) => match typer.get(s) {
                     Some(typ) => match typ {
@@ -1625,7 +1634,7 @@ impl<'a> VariableValue<'a> {
                     let (prim, inc) = Primitive::parse_ctx(type_id, &tokens[i..])?;
                     value = Some(VariableValue::Value(Value::Primitive(prim)));
                     match tokens.get(i + 1) {
-                        Some(token) => match token {
+                        Some((span, token)) => match token {
                             Token::Plus | Token::Minus | Token::Multiply | Token::Divide => {
                                 panic!("{token:?} {:?}", &tokens[i..])
                             }
@@ -1648,7 +1657,7 @@ impl<'a> Variable<'a> {
     #[instrument(name = "Variable::parse_ctx", skip_all, err)]
     pub fn parse_ctx(
         ctx: &Typer<'a>,
-        tokens: &[Token<'a>],
+        tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(&'a str, bool, Option<TypeID>, VariableValue<'a>, usize)> {
         enum VariableState {
             Let,
@@ -1666,7 +1675,7 @@ impl<'a> Variable<'a> {
         let mut i = 0;
 
         loop {
-            let Some(token) = tokens.get(i) else {
+            let Some((span, token)) = tokens.get(i) else {
                 break;
             };
 
@@ -1739,17 +1748,19 @@ pub(crate) enum MathItem<'a> {
 
 impl<'a> MathExpr {
     #[instrument(name = "MathExpr::parse", skip_all, err)]
-    pub fn parse(tokens: &[Token<'a>]) -> ParseResult<(Vec<MathItem<'a>>, usize)> {
+    pub fn parse(tokens: &[(Span, Token<'a>)]) -> ParseResult<(Vec<MathItem<'a>>, usize)> {
         let mut i = 0;
         let mut items = vec![];
-        while let Some(token) = tokens.get(i) {
+        while let Some((span, token)) = tokens.get(i) {
             match token {
                 Token::Plus => items.push(MathItem::Op(Operation::Add)),
                 Token::Minus => items.push(MathItem::Op(Operation::Sub)),
                 Token::Multiply => items.push(MathItem::Op(Operation::Mult)),
                 Token::Divide => items.push(MathItem::Op(Operation::Div)),
 
-                Token::Number(_n) => items.push(MathItem::Prim(Primitive::parse(&[*token])?.0)),
+                Token::Number(_n) => {
+                    items.push(MathItem::Prim(Primitive::parse(&[(*span, *token)])?.0))
+                }
                 Token::Semicolon => return Ok((items, i.saturating_sub(1))),
                 t => panic!("{t:?}"),
             }
@@ -1774,7 +1785,7 @@ impl VariableUse {
     #[instrument(name = "VariableUse::parse_ctx", skip_all, ret)]
     pub fn parse_ctx<'a>(
         _ctx: &Typer<'a>,
-        tokens: &[Token<'a>],
+        tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(VariableValueReturn<'a>, usize)> {
         #[derive(Debug)]
         enum State {
@@ -1789,7 +1800,7 @@ impl VariableUse {
         let mut value = None;
         let mut i = 0;
 
-        while let Some(tok) = tokens.get(i) {
+        while let Some((span, tok)) = tokens.get(i) {
             match state {
                 State::Name => match tok {
                     Token::Str(s) => {
@@ -1806,8 +1817,9 @@ impl VariableUse {
                         i += 1;
                     }
                     Token::Number(_n) => {
-                        let prim =
-                            VariableValue::Value(Value::Primitive(Primitive::parse(&[*tok])?.0));
+                        let prim = VariableValue::Value(Value::Primitive(
+                            Primitive::parse(&[(*span, *tok)])?.0,
+                        ));
                         match name {
                             None => {
                                 name = Some(prim);
@@ -1864,18 +1876,18 @@ impl VariableUse {
                         //     op = Some(Operation::Div);
                         //     i += 1;
                         // }
-                        (Token::Exclamation, Some(Token::Equal)) => {
+                        (Token::Exclamation, Some((span, Token::Equal))) => {
                             todo!("should this lang support things like let foo = bar != baz")
                         }
-                        (Token::Number(_n), Some(Token::Semicolon))
-                        | (Token::QuotedString(_n), Some(Token::Semicolon)) => {
+                        (Token::Number(_n), Some((span, Token::Semicolon)))
+                        | (Token::QuotedString(_n), Some((span, Token::Semicolon))) => {
                             assert_eq!(op.unwrap(), Operation::Assign);
                             let prim = VariableValue::Value(Value::Primitive(
-                                Primitive::parse(&[*tok])?.0,
+                                Primitive::parse(&[(*span, *tok)])?.0,
                             ));
                             return Ok((VariableValueReturn::Assignment(prim), i + 1));
                         }
-                        (Token::Str(_s), Some(Token::Equal)) => {
+                        (Token::Str(_s), Some((span, Token::Equal))) => {
                             let (val, inc) =
                                 VariableValue::parse_ctx(&(None, _ctx.clone()), &tokens[i + 2..])?;
                             // [Token::Str(_), Token::Equal, Val, Token::Semicolon];
@@ -1893,14 +1905,14 @@ impl VariableUse {
                             i += inc + 1;
                             return Ok((VariableValueReturn::Assignment(val), i));
                         }
-                        (Token::Number(_n), Some(Token::Plus))
-                        | (Token::Number(_n), Some(Token::Minus))
-                        | (Token::Number(_n), Some(Token::Multiply))
-                        | (Token::Number(_n), Some(Token::Divide)) => {
+                        (Token::Number(_n), Some((span, Token::Plus)))
+                        | (Token::Number(_n), Some((span, Token::Minus)))
+                        | (Token::Number(_n), Some((span, Token::Multiply)))
+                        | (Token::Number(_n), Some((span, Token::Divide))) => {
                             let (val, inc) = MathExpr::parse(&tokens[i..])?;
                             return Ok((VariableValueReturn::Expr(val), i + inc + 1));
                         }
-                        (Token::True, Some(Token::Semicolon)) => {
+                        (Token::True, Some((span, Token::Semicolon))) => {
                             assert_eq!(op.unwrap(), Operation::Assign);
                             return Ok((
                                 VariableValueReturn::Assignment(VariableValue::Value(
@@ -1909,7 +1921,7 @@ impl VariableUse {
                                 i + 1,
                             ));
                         }
-                        (Token::False, Some(Token::Semicolon)) => {
+                        (Token::False, Some((span, Token::Semicolon))) => {
                             assert_eq!(op.unwrap(), Operation::Assign);
                             return Ok((
                                 VariableValueReturn::Assignment(VariableValue::Value(

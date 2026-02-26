@@ -109,9 +109,9 @@ impl<'a> Parser<'a> {
                 break;
             }
             let token = &iter[idx];
-            match token {
+            match token.1 {
                 Token::Str(_) => {
-                    if let Some(peek) = iter.get(idx + 1)
+                    if let Some((span, peek)) = iter.get(idx + 1)
                         && peek == &Token::LeftParen
                     {
                         let (call, i) =
@@ -351,6 +351,11 @@ mod parseable {
 
         let tokens = Tokenizer::tokenize(data);
         let tokens = tokens.tokens();
+
+        // for (span, t) in tokens {
+        //     info!("source index {:?} {t:?}", &data[span.start..span.end]);
+        // }
+        // panic!();
         let mut i = 0;
         let mut typer = Typer::default();
         let (name, decl, inc) = StructDecl::parse_ctx_mut(&mut typer, &tokens[i..])?;
@@ -458,8 +463,16 @@ mod parseable {
         let baz = false;
         }"#;
 
+        // let binding = Tokenizer::tokenize(data);
+        // let tokens = binding.tokens();
+        // info!(?tokens);
+        //
+        // for (span, t) in tokens {
+        //     info!("source index {:?} {t:?}", &data[span.start..span.end]);
+        // }
+
         let parser = Parser::parse(data)?;
-        // info!(?parser);
+        info!(?parser);
 
         Ok(())
     }
