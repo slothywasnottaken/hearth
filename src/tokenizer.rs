@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use tracing::{debug, error, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
@@ -234,11 +234,50 @@ impl<'a> Tokenizer<'a> {
         Self { tokens }
     }
 
+    fn return_ident_or_token(
+        ident: Option<Ident>,
+        source: &'a str,
+        i: usize,
+        ch: char,
+    ) -> (Span, Token<'a>) {
+        if let Some(iden) = ident {
+            return (Span::new(iden.inner(), i), iden.into_str(source, i));
+        }
+
+        (
+            Span::new(i, i + 1),
+            match ch {
+                '=' => Token::Equal,
+                '!' => Token::Exclamation,
+                '{' => Token::LeftAngleBracket,
+                '}' => Token::RightAngleBracket,
+                '(' => Token::LeftParen,
+                ')' => Token::RightParen,
+                ';' => Token::Semicolon,
+                ':' => Token::Colon,
+                '+' => Token::Plus,
+                '-' => Token::Minus,
+                '*' => Token::Multiply,
+                '/' => Token::Divide,
+                '[' => Token::LeftBracket,
+                ']' => Token::RightBracket,
+                '<' => Token::LeftCarrot,
+                '>' => Token::RightCarrot,
+                ',' => Token::Comma,
+
+                t => {
+                    error!("found unknown {t:?}");
+                    Token::Unknown
+                }
+            },
+        )
+    }
+
     /// works as an iterator, the number it returns is an increment amount, you can give it a big
     /// string and repeatedly call next() on it and just increment the start of your slice to get
     /// the next word
     // #[instrument(skip_all, ret)]
-    fn next_token(source: &str) -> Option<(Span, Token<'_>)> {
+    fn next_token(source: &'a str) -> Option<(Span, Token<'a>)> {
         let mut ident: Option<Ident> = None;
         let mut quoted = false;
         for (i, ch) in source.char_indices() {
@@ -261,90 +300,6 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
 
-                '=' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Equal)),
-                },
-                '!' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Exclamation)),
-                },
-                '{' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::LeftAngleBracket)),
-                },
-
-                '}' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::RightAngleBracket)),
-                },
-
-                '(' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::LeftParen)),
-                },
-                ')' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::RightParen)),
-                },
-
-                ';' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Semicolon)),
-                },
-
-                ':' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Colon)),
-                },
-
-                ',' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Comma)),
-                },
-
-                '+' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Plus)),
-                },
-                '-' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Minus)),
-                },
-                '*' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Multiply)),
-                },
-                '/' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::Divide)),
-                },
                 '.' => match ident {
                     Some(iden) => match iden {
                         // if number dont return here because if its 10.0 it would return 10
@@ -355,36 +310,14 @@ impl<'a> Tokenizer<'a> {
                     },
                     None => return Some((Span::new(i, i + 1), Token::Dot)),
                 },
-                '[' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::LeftBracket)),
-                },
-                ']' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::RightBracket)),
-                },
-                '<' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::LeftCarrot)),
-                },
-                '>' => match ident {
-                    Some(iden) => {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                    None => return Some((Span::new(i, i + 1), Token::RightCarrot)),
-                },
 
                 '\n' => {
                     if let Some(iden) = ident {
                         return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
                     }
                 }
+
+                '_' => continue,
 
                 '"' => match quoted {
                     false => {
@@ -406,12 +339,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
 
-                tok => {
-                    if ident.is_none() {
-                        error!("error: found {tok:?}");
-                        return Some((Span::new(i, i), Token::Unknown));
-                    }
-                }
+                tok => return Some(Self::return_ident_or_token(ident, source, i, tok)),
             }
         }
 
