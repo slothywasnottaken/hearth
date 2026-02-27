@@ -31,8 +31,8 @@ fn main() -> Result<(), ParseError> {
     for val in parser.ast().nodes() {
         match val {
             parser::AstNode::Function(function_decl) => {
-                for (name, val) in &function_decl.block {
-                    info!(?name, ?val);
+                for val in &function_decl.block {
+                    info!(?val);
                 }
             }
             t => panic!("{t:?}"),

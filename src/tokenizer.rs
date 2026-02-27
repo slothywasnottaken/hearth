@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use tracing::{debug, error, info, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
@@ -360,8 +360,6 @@ impl<'a> Tokenizer<'a> {
 
 #[cfg(test)]
 mod token {
-    use tracing::info;
-
     use crate::tokenizer::{Span, Token, Tokenizer, TypeID};
 
     fn setup_logger() {
@@ -826,8 +824,6 @@ mod token {
 
     #[cfg(test)]
     mod ops {
-        use tracing::info;
-
         use crate::tokenizer::{Span, Token, Tokenizer, token::setup_logger};
 
         #[test]
