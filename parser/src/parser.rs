@@ -3,24 +3,23 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    default,
     error::Error,
     fmt::{Debug, Display},
     io::Write,
     str::FromStr,
 };
 
-use tracing::{Subscriber, debug, error, info, instrument, warn};
+use tracing::{Subscriber, debug, error, info, instrument, trace, warn};
 
-use crate::{
-    tokenizer::{Span, Token, Tokenizer},
-    types::{
-        self, Array, BlockValue, ComplexType, ComplexTypeDecl, ComplexTypeID, ComplexTypeName,
-        ComplexValue, Enum, EnumDecl, Frame, FunctionCall, FunctionDecl, MathExpr, MathItem,
-        Number, Operation, Primitive, PrimitiveID, Struct, StructDecl, TypeDecl, TypeDeclReturn,
-        TypeID, Typer, Value, Variable, VariableUse, VariableValue, VariableValueReturn,
-        Visibility,
-    },
+use crate::types::{
+    self, Array, Block, BlockValue, ComplexType, ComplexTypeDecl, ComplexTypeID, ComplexTypeName,
+    ComplexValue, Else, ElseIfStatement, Enum, EnumDecl, Frame, FunctionCall, FunctionDecl,
+    MathExpr, MathItem, Number, Operation, Primitive, PrimitiveID, Struct, StructDecl, TypeDecl,
+    TypeDeclReturn, TypeID, Typer, Value, Variable, VariableUse, VariableValue,
+    VariableValueReturn, Visibility,
 };
+use tokenizer::{Span, Token, Tokenizer};
 
 #[derive(Debug, PartialEq)]
 pub enum Type<'a> {
@@ -117,13 +116,7 @@ impl<'a> Parser<'a> {
                     info!(?type_id);
                 }
                 Token::Pub | Token::Function | Token::Struct | Token::Enum => {
-                    let (name, decl, unknown, i) =
-                        TypeDecl::parse_ctx_mut(&mut typer, &iter[idx..])?;
-                    if let Some(unknown) = unknown {
-                        for item in unknown {
-                            unknown_types.insert(item);
-                        }
-                    }
+                    let (name, decl, i) = TypeDecl::parse_ctx_mut(&mut typer, &iter[idx..])?;
                     idx += i;
                     needs_inc = false;
                     match decl {
@@ -467,6 +460,8 @@ impl<'a> Struct<'a> {
                     Token::Str(s) => {
                         stack.last_mut().unwrap().pending_name = Some(s);
 
+                        /// finds nested struct through assuming its already read the field name so
+                        /// then anything that is :<str> { is a struct
                         if let Some((_, Token::Colon)) = tokens.get(i + 1)
                             && let Some((_, Token::Str(typ))) = tokens.get(i + 2)
                             && let Some((_, Token::LeftAngleBracket)) = tokens.get(i + 3)
@@ -493,13 +488,12 @@ impl<'a> Struct<'a> {
                             return Ok((comp, i));
                         }
 
-                        // ensures that the type already exists
                         assert!(ctx.get(finished.name).is_some());
 
-                        let paren = stack.last_mut().unwrap();
-                        let paren_name = paren.pending_name.take().unwrap();
-                        paren.fields.push((
-                            paren_name,
+                        let parent = stack.last_mut().unwrap();
+                        let parent_name = parent.pending_name.take().unwrap();
+                        parent.fields.push((
+                            parent_name,
                             Value::Complex(crate::types::ComplexValue::Struct(comp)),
                         ));
                         i += 1;
@@ -605,6 +599,407 @@ impl<'a> EnumDecl<'a> {
     }
 }
 
+impl<'a> Block<'a> {
+    fn parse_ctx(ctx: &Typer<'a>, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
+        enum State {
+            Block,
+            Return,
+        }
+
+        let mut state = State::Block;
+        let mut block = Block::default();
+        let mut i = 0;
+
+        loop {
+            let Some((_, token)) = tokens.get(i) else {
+                break;
+            };
+            match state {
+                State::Block => match token {
+                    Token::Return => state = State::Return,
+                    Token::Else => match block.values.last_mut().unwrap() {
+                        BlockValue::IfStatement(if_statement) => {
+                            if_statement.block.push(BlockValue::Else(Block::default()))
+                        }
+                        BlockValue::Else(block) => block.push(BlockValue::Else(Block::default())),
+                        BlockValue::ElseIf(else_if_statement) => else_if_statement
+                            .block
+                            .push(BlockValue::Else(Block::default())),
+                        BlockValue::Block(block) => match block.last_mut().unwrap() {
+                            BlockValue::Else(block) => {
+                                block.push(BlockValue::Else(Block::default()))
+                            }
+                            BlockValue::Block(block) => {
+                                block.push(BlockValue::Else(Block::default()))
+                            }
+                            t => block.push(BlockValue::Else(Block::default())),
+                        },
+                        t => block.push(BlockValue::Else(Block::default())),
+                    },
+                    Token::LeftAngleBracket => {}
+                    Token::RightAngleBracket => {
+                        let completed = block.values.pop().unwrap();
+                        if block.values.is_empty() {
+                            info!(?completed, "finished");
+                            return Ok((
+                                Block {
+                                    values: vec![completed],
+                                },
+                                i,
+                            ));
+                        }
+
+                        info!(?completed);
+                        block.push(completed);
+                    }
+                    Token::Let => {
+                        let (var_name, mutable, id, value, inc) =
+                            Variable::parse_ctx(ctx, &tokens[i..])?;
+
+                        i += inc;
+
+                        let id = match id {
+                            Some(id) => Some(id),
+                            None => match &value {
+                                VariableValue::Value(value) => value.id(Some(ctx)),
+                                VariableValue::Name(var_name) => {
+                                    let mut id_ = None;
+                                    for b in block.values.iter_mut().rev() {
+                                        match b {
+                                            BlockValue::VariableDecl(decl) => {
+                                                if *var_name == decl.0 {
+                                                    match &decl.1.val {
+                                                        VariableValue::Value(value) => {
+                                                            id_ = value.id(Some(ctx));
+                                                        }
+                                                        VariableValue::Name(_) => todo!(),
+                                                        VariableValue::Expr(math_items) => {
+                                                            todo!()
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            BlockValue::Else(else_statement) => {
+                                                for values in else_statement.iter().rev() {
+                                                    match values {
+                                                        BlockValue::VariableDecl(decl) => {
+                                                            if *var_name == decl.0 {
+                                                                match &decl.1.val {
+                                                                    VariableValue::Value(value) => {
+                                                                        id_ = value.id(Some(ctx));
+                                                                    }
+                                                                    VariableValue::Name(_) => {
+                                                                        todo!()
+                                                                    }
+                                                                    VariableValue::Expr(
+                                                                        math_items,
+                                                                    ) => {
+                                                                        todo!()
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        BlockValue::Else(else_statement) => {
+                                                            for values in
+                                                                else_statement.iter().rev()
+                                                            {
+                                                                match values {
+                                                                    BlockValue::VariableDecl(
+                                                                        decl,
+                                                                    ) => {
+                                                                        if *var_name == decl.0 {
+                                                                            match &decl.1.val {
+                                                                    VariableValue::Value(value) => {
+                                                                        id_ = value.id(Some(ctx));
+                                                                    }
+                                                                    VariableValue::Name(_) => {
+                                                                        todo!()
+                                                                    }
+                                                                    VariableValue::Expr(
+                                                                        math_items,
+                                                                    ) => {
+                                                                        todo!()
+                                                                    }
+                                                                }
+                                                                        }
+                                                                    }
+                                                                    BlockValue::Else(
+                                                                        else_block,
+                                                                    ) => continue,
+                                                                    t => panic!("{t:?}"),
+                                                                }
+                                                            }
+                                                        }
+                                                        t => panic!("{t:?}"),
+                                                    }
+                                                }
+                                            }
+                                            BlockValue::Block(block_values) => {
+                                                for values in block_values.iter().rev() {
+                                                    match values {
+                                                        BlockValue::VariableDecl(decl) => {
+                                                            if *var_name == decl.0 {
+                                                                match &decl.1.val {
+                                                                    VariableValue::Value(value) => {
+                                                                        id_ = value.id(Some(ctx));
+                                                                    }
+                                                                    VariableValue::Name(_) => {
+                                                                        todo!()
+                                                                    }
+                                                                    VariableValue::Expr(
+                                                                        math_items,
+                                                                    ) => {
+                                                                        todo!()
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        BlockValue::Else(else_statement) => {
+                                                            for values in
+                                                                else_statement.iter().rev()
+                                                            {
+                                                                match values {
+                                                                    BlockValue::VariableDecl(
+                                                                        decl,
+                                                                    ) => {
+                                                                        if *var_name == decl.0 {
+                                                                            match &decl.1.val {
+                                                                    VariableValue::Value(value) => {
+                                                                        id_ = value.id(Some(ctx));
+                                                                    }
+                                                                    VariableValue::Name(_) => {
+                                                                        todo!()
+                                                                    }
+                                                                    VariableValue::Expr(
+                                                                        math_items,
+                                                                    ) => {
+                                                                        todo!()
+                                                                    }
+                                                                }
+                                                                        }
+                                                                    }
+                                                                    BlockValue::Else(
+                                                                        else_block,
+                                                                    ) => continue,
+                                                                    t => panic!("{t:?}"),
+                                                                }
+                                                            }
+                                                        }
+                                                        BlockValue::ElseIf(else_if_statement) => {
+                                                            todo!()
+                                                        }
+                                                        t => panic!("{t:?}"),
+                                                    }
+                                                }
+                                            }
+                                            t => panic!("{t:?}"),
+                                        }
+                                    }
+                                    id_
+                                }
+                                t => panic!("{t:?}"),
+                            },
+                        };
+
+                        match value {
+                            VariableValue::Value(value) => {
+                                let var_value = BlockValue::VariableDecl((
+                                    var_name,
+                                    Variable {
+                                        typeid: id.unwrap(),
+                                        mutable,
+                                        val: VariableValue::Value(value),
+                                    },
+                                ));
+                                info!("{var_value:?}");
+                                match block.values.last_mut() {
+                                    None => block.push(var_value),
+                                    Some(block_value) => match block_value {
+                                        BlockValue::Else(block) | BlockValue::Block(block) => {
+                                            match block.values.last_mut() {
+                                                None => block.push(var_value),
+                                                Some(block_value) => match block_value {
+                                                    BlockValue::VariableDecl(_) => todo!(),
+                                                    BlockValue::VariableReAssignment(_) => todo!(),
+                                                    BlockValue::IfStatement(if_statement) => {
+                                                        if_statement.block.push(var_value)
+                                                    }
+                                                    BlockValue::Else(else_block) => {
+                                                        else_block.push(var_value)
+                                                    }
+                                                    BlockValue::ElseIf(else_if_statement) => {
+                                                        else_if_statement.block.push(var_value)
+                                                    }
+                                                    BlockValue::Block(inner_block) => {
+                                                        inner_block.push(var_value)
+                                                    }
+                                                    t => panic!("{t:?}"),
+                                                },
+                                            }
+                                        }
+                                        t => warn!("{t:?}"),
+                                    },
+                                }
+                            }
+                            VariableValue::Name(name) => {
+                                let var_value = BlockValue::VariableDecl((
+                                    var_name,
+                                    Variable {
+                                        typeid: id.unwrap(),
+                                        mutable,
+                                        val: VariableValue::Name(name),
+                                    },
+                                ));
+                                info!("name {var_value:?}");
+                                match block.values.last_mut() {
+                                    None => {
+                                        block.values.push(var_value);
+                                    }
+                                    Some(block_value) => match block_value {
+                                        BlockValue::Else(block) | BlockValue::Block(block) => {
+                                            match block.values.last_mut().unwrap() {
+                                                BlockValue::IfStatement(if_statement) => {
+                                                    if_statement.block.push(var_value)
+                                                }
+                                                BlockValue::Else(else_block) => {
+                                                    match else_block.last_mut() {
+                                                        None => else_block.push(var_value),
+                                                        Some(else_block_value) => {
+                                                            match else_block_value {
+                                                                BlockValue::IfStatement(
+                                                                    if_statement,
+                                                                ) => if_statement
+                                                                    .block
+                                                                    .push(var_value),
+                                                                BlockValue::Else(
+                                                                    inner_else_block,
+                                                                ) => {
+                                                                    inner_else_block.push(var_value)
+                                                                }
+                                                                BlockValue::ElseIf(
+                                                                    else_if_statement,
+                                                                ) => else_if_statement
+                                                                    .block
+                                                                    .push(var_value),
+                                                                BlockValue::Block(inner_block) => {
+                                                                    inner_block.push(var_value)
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                BlockValue::ElseIf(else_if_statement) => {
+                                                    else_if_statement.block.push(var_value)
+                                                }
+                                                BlockValue::Block(inner_block) => {
+                                                    inner_block.push(var_value)
+                                                }
+                                                t => panic!("{t:?}"),
+                                            }
+                                        }
+                                        t => warn!("{t:?}"),
+                                    },
+                                }
+                            }
+                            t => panic!("{t:?} {block:?}"),
+                        }
+
+                        trace!(?block);
+                    }
+
+                    // Token::Str(s) => {
+                    //     let (var_name, inc) = VariableUse::parse_ctx(ctx, &tokens[i..])?;
+                    //
+                    //     let mut reass = None;
+                    //     for b in block.iter_mut().rev() {
+                    //         match b {
+                    //             BlockValue::Else(else_statement) => {
+                    //                 panic!("{else_statement:?}")
+                    //             }
+                    //             BlockValue::Block(block_values) => {
+                    //                 for values in block_values.iter() {
+                    //                     match values {
+                    //                         BlockValue::VariableDecl(decl) => {
+                    //                             reass = match var_name {
+                    //                                 VariableValueReturn::Assignment(
+                    //                                     ref variable_value,
+                    //                                 ) => Some(variable_value.clone()),
+                    //                                 VariableValueReturn::ReAssignment(
+                    //                                     ref variable_value,
+                    //                                 ) => Some(variable_value.clone()),
+                    //                                 VariableValueReturn::Expr(ref math_items) => {
+                    //                                     Some(VariableValue::Expr(
+                    //                                         math_items.to_vec(),
+                    //                                     ))
+                    //                                 }
+                    //                             };
+                    //                         }
+                    //                         t => panic!("{t:?}"),
+                    //                     }
+                    //                 }
+                    //             }
+                    //             t => panic!("{t:?}"),
+                    //         }
+                    //     }
+                    //
+                    //     match block.last_mut().unwrap() {
+                    //         BlockValue::Block(block_values) => block_values
+                    //             .push(BlockValue::VariableReAssignment((s, reass.unwrap()))),
+                    //         t => panic!("{t:?}"),
+                    //     }
+                    //
+                    //     i += inc;
+                    // }
+                    t => panic!("{t:?}"),
+                },
+                State::Return => {
+                    let block_values = match block.values.last_mut().unwrap() {
+                        BlockValue::Else(else_statement) => {
+                            panic!("{else_statement:?}")
+                        }
+                        BlockValue::Block(block_values) => block_values,
+                        t => panic!("{t:?}"),
+                    };
+                    match token {
+                        Token::Str(s) => {
+                            // handle returning a struct being made as the return value? ie
+                            // return Foo { ... };
+                            block_values.push(BlockValue::Return(VariableValue::Name(s)));
+                        }
+                        Token::Number(_n) | Token::QuotedString(_n) => {
+                            let (prim, _i) = Primitive::parse(&tokens[i..])?;
+                            let prim_id = prim.id();
+                            block_values.push(BlockValue::Return(VariableValue::Value(
+                                Value::Primitive(prim),
+                            )));
+                            // match (decl.return_type, prim_id) {
+                            //     (Some(val_id), prim_id) => match val_id {
+                            //         TypeID::Primitive(primitive_id) => {
+                            //             if !primitive_id.can_fit(prim_id) {
+                            //                 panic!("{val_id:?} {prim_id:?}");
+                            //             }
+                            //         }
+                            //         TypeID::Complex(_complex_type_id) => todo!(),
+                            //     },
+                            //     t => panic!("{t:?}"),
+                            // }
+                        }
+
+                        Token::Semicolon => {
+                            state = State::Block;
+                        }
+                        t => panic!("{t:?}"),
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        Ok((block, i))
+    }
+}
+
 impl<'a> FunctionDecl<'a> {
     #[instrument(name = "FunctionDecl::parse_ctx", skip_all, err)]
     fn parse_ctx(ctx: &Typer<'a>, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
@@ -615,15 +1010,10 @@ impl<'a> FunctionDecl<'a> {
             Arg,
             TypeID,
             ReturnType,
-            Block,
-            Return,
         }
 
         let mut state = State::Fn;
-        let mut decl = FunctionDecl {
-            block: vec![BlockValue::Block(vec![])],
-            ..Default::default()
-        };
+        let mut decl = FunctionDecl::default();
 
         let mut found_arg = None;
         let mut mutable = false;
@@ -661,7 +1051,6 @@ impl<'a> FunctionDecl<'a> {
                         found_arg = Some(s);
                     }
                     Token::Colon => state = State::TypeID,
-                    Token::RightBracket => state = State::Return,
                     Token::RightParen => {
                         state = State::ReturnType;
                     }
@@ -681,230 +1070,19 @@ impl<'a> FunctionDecl<'a> {
                         found_arg = None;
                         mutable = false;
                     }
-                    Token::Str(s) => match *s {
-                        "string" => {
-                            match &mut decl.args {
-                                Some(args) => args.push((
-                                    mutable,
-                                    found_arg.unwrap(),
-                                    TypeID::Primitive(PrimitiveID::String),
-                                )),
-                                None => {
-                                    decl.args = Some(vec![(
-                                        mutable,
-                                        found_arg.unwrap(),
-                                        TypeID::Primitive(PrimitiveID::String),
-                                    )])
-                                }
-                            }
-                            found_arg = None;
-                            mutable = false;
-                        }
-                        _ => panic!("{s:?}"),
-                    },
                     Token::RightParen => state = State::ReturnType,
                     Token::Comma => state = State::Arg,
                     t => panic!("{t:?}"),
                 },
                 State::ReturnType => match token {
                     Token::TypeID(t) => decl.return_type = Some(TypeID::from(*t)),
-                    Token::LeftAngleBracket => state = State::Block,
+                    Token::LeftAngleBracket => {
+                        let (block, inc) = Block::parse_ctx(ctx, &tokens[i..])?;
+                        decl.block = block;
+                        return Ok((decl, i + inc));
+                    }
                     t => panic!("{t:?}"),
                 },
-
-                State::Block => {
-                    match token {
-                        Token::Return => state = State::Return,
-                        Token::LeftAngleBracket => {
-                            decl.block.push(BlockValue::Block(vec![]));
-                        }
-                        Token::RightAngleBracket => {
-                            let finished = decl.block.pop().unwrap();
-                            if decl.block.len() == 1 {
-                                decl.block.push(finished);
-                                return Ok((decl, i));
-                            }
-                            decl.block.push(finished);
-                        }
-                        Token::Str(s) => {
-                            let (var_name, inc) = VariableUse::parse_ctx(ctx, &tokens[i..])?;
-
-                            let mut reass = None;
-                            for b in decl.block.iter_mut().rev() {
-                                match b {
-                                    BlockValue::Block(block_values) => {
-                                        for values in block_values {
-                                            match values {
-                                                BlockValue::VariableDecl(decl) => {
-                                                    reass = match var_name {
-                                                        VariableValueReturn::Assignment(
-                                                            ref variable_value,
-                                                        ) => Some(variable_value.clone()),
-                                                        VariableValueReturn::ReAssignment(
-                                                            ref variable_value,
-                                                        ) => Some(variable_value.clone()),
-                                                        VariableValueReturn::Expr(
-                                                            ref math_items,
-                                                        ) => Some(VariableValue::Expr(
-                                                            math_items.to_vec(),
-                                                        )),
-                                                    };
-                                                }
-                                                BlockValue::VariableReAssignment(_) => {
-                                                    todo!("should be impossible ?????")
-                                                }
-                                                BlockValue::Block(block_values) => {
-                                                    todo!("is this possible ???")
-                                                }
-                                            }
-                                        }
-                                    }
-                                    t => panic!("{t:?}"),
-                                }
-                            }
-
-                            match decl.block.last_mut().unwrap() {
-                                BlockValue::VariableDecl(_) => todo!(),
-                                BlockValue::VariableReAssignment(_) => todo!(),
-                                BlockValue::Block(block_values) => block_values
-                                    .push(BlockValue::VariableReAssignment((s, reass.unwrap()))),
-                            }
-
-                            i += inc;
-                        }
-                        Token::Let => {
-                            let (name, mutable, id, value, inc) =
-                                Variable::parse_ctx(ctx, &tokens[i..])?;
-
-                            i += inc;
-
-                            let id = match id {
-                                Some(id) => Some(id),
-                                None => {
-                                    match &value {
-                                        VariableValue::Value(value) => value.id(Some(ctx)),
-                                        VariableValue::Name(var_name) => {
-                                            let mut i = None;
-                                            for b in decl.block.iter().rev() {
-                                                match b {
-                                                    BlockValue::Block(block_values) => {
-                                                        for values in block_values {
-                                                            match values {
-                                                        BlockValue::VariableDecl(decl) => {
-                                                        if *var_name == decl.0{
-                                                            match &decl.1.val {
-                                                            VariableValue::Value(value) => {
-                                                                i = value.id(Some(ctx));
-                                                            }
-                                                            VariableValue::Name(_) => todo!(),
-                                                            VariableValue::Expr(math_items) => todo!(),
-                                                            }
-                                                        }
-                                                        }
-                                                        BlockValue::VariableReAssignment(reass) => info!(?reass),
-                                                        BlockValue::Block(block_values) => info!(?block_values),
-                                                    }
-                                                        }
-                                                    }
-                                                    t => panic!("{t:?}"),
-                                                }
-                                            }
-
-                                            i
-                                        }
-                                        VariableValue::Expr(_expr) => None,
-                                    }
-                                }
-                            };
-
-                            match value {
-                                VariableValue::Value(value) => match decl.block.last_mut().unwrap()
-                                {
-                                    BlockValue::VariableDecl(_) => todo!(),
-                                    BlockValue::VariableReAssignment(_) => todo!(),
-                                    BlockValue::Block(block_values) => {
-                                        block_values.push(BlockValue::VariableDecl((
-                                            name,
-                                            Variable {
-                                                typeid: id.unwrap(),
-                                                mutable,
-                                                val: VariableValue::Value(value),
-                                            },
-                                        )));
-                                    }
-                                },
-                                VariableValue::Name(_var_name) => {
-                                    match decl.block.last_mut().unwrap() {
-                                        BlockValue::VariableDecl(_) => todo!(),
-                                        BlockValue::VariableReAssignment(_) => todo!(),
-                                        BlockValue::Block(block_values) => {
-                                            block_values.push(BlockValue::VariableDecl((
-                                                name,
-                                                Variable {
-                                                    typeid: id.unwrap(),
-                                                    mutable,
-                                                    val: VariableValue::Name(_var_name),
-                                                },
-                                            )));
-                                        }
-                                    }
-                                }
-                                VariableValue::Expr(expr) => match decl.block.last_mut().unwrap() {
-                                    BlockValue::VariableDecl(_) => todo!(),
-                                    BlockValue::VariableReAssignment(_) => todo!(),
-                                    BlockValue::Block(block_values) => {
-                                        block_values.push(BlockValue::VariableDecl((
-                                            name,
-                                            Variable {
-                                                typeid: id.unwrap(),
-                                                mutable,
-                                                val: VariableValue::Expr(expr),
-                                            },
-                                        )));
-                                    }
-                                },
-                            }
-                        }
-                        t => panic!("{t:?}"),
-                    }
-                }
-                State::Return => {
-                    if decl.return_type.is_none() {
-                        panic!()
-                    }
-                    match token {
-                        Token::Str(s) => {
-                            for (val) in &decl.block {
-                                if let BlockValue::VariableDecl((name, variable)) = val
-                                    && decl.return_type.unwrap() != variable.typeid
-                                    && name == s
-                                {
-                                    panic!()
-                                }
-                            }
-                        }
-                        Token::Number(_n) | Token::QuotedString(_n) => {
-                            let (prim, _i) = Primitive::parse_ctx(&decl.return_type, &tokens[i..])?;
-                            let prim_id = prim.id();
-                            match (decl.return_type, prim_id) {
-                                (Some(val_id), prim_id) => match val_id {
-                                    TypeID::Primitive(primitive_id) => {
-                                        if !primitive_id.can_fit(prim_id) {
-                                            panic!("{val_id:?} {prim_id:?}");
-                                        }
-                                    }
-                                    TypeID::Complex(_complex_type_id) => todo!(),
-                                },
-                                t => panic!("{t:?}"),
-                            }
-                        }
-
-                        Token::Semicolon => {
-                            return Ok((decl, i));
-                        }
-                        t => panic!("{t:?}"),
-                    }
-                }
             }
 
             i += 1;
@@ -976,12 +1154,7 @@ impl TypeDecl {
     pub fn parse_ctx_mut<'a>(
         ctx: &mut Typer<'a>,
         tokens: &[(Span, Token<'a>)],
-    ) -> ParseResult<(
-        Option<&'a str>,
-        TypeDeclReturn<'a>,
-        Option<Vec<&'a str>>,
-        usize,
-    )> {
+    ) -> ParseResult<(Option<&'a str>, TypeDeclReturn<'a>, usize)> {
         let mut start = 0;
         let vis = if tokens[0].1 == Token::Pub {
             start = 1;
@@ -994,19 +1167,19 @@ impl TypeDecl {
                 let (mut decl, i) = FunctionDecl::parse_ctx(ctx, tokens)?;
                 decl.visibility = vis;
 
-                Ok((None, TypeDeclReturn::Function(decl), None, i))
+                Ok((None, TypeDeclReturn::Function(decl), i))
             }
             (_, Token::Struct) => {
                 let (name, mut decl, i) = StructDecl::parse_ctx_mut(ctx, tokens)?;
                 decl.visibility = vis;
 
-                Ok((Some(name), TypeDeclReturn::Struct(decl), None, i))
+                Ok((Some(name), TypeDeclReturn::Struct(decl), i))
             }
             (_, Token::Enum) => {
                 let (name, mut decl, i) = EnumDecl::parse(tokens)?;
                 decl.visibility = vis;
 
-                Ok((Some(name), TypeDeclReturn::Enum(decl), None, i))
+                Ok((Some(name), TypeDeclReturn::Enum(decl), i))
             }
             t => panic!("{t:?}"),
         }
@@ -1014,7 +1187,7 @@ impl TypeDecl {
 }
 
 impl<'a> VariableValue<'a> {
-    #[instrument(name = "VariableValue::parse_ctx", skip_all, ret)]
+    // #[instrument(name = "VariableValue::parse_ctx", skip_all, ret)]
     pub fn parse_ctx(
         ctx: &(Option<TypeID>, Typer<'a>),
         tokens: &[(Span, Token<'a>)],
@@ -1083,7 +1256,7 @@ impl<'a> VariableValue<'a> {
 }
 
 impl<'a> Variable<'a> {
-    #[instrument(name = "Variable::parse_ctx", skip_all, ret)]
+    // #[instrument(name = "Variable::parse_ctx", skip_all, ret)]
     pub fn parse_ctx(
         ctx: &Typer<'a>,
         tokens: &[(Span, Token<'a>)],
@@ -1190,7 +1363,7 @@ impl<'a> MathExpr {
 }
 
 impl VariableUse {
-    #[instrument(name = "VariableUse::parse_ctx", skip_all, ret)]
+    // #[instrument(name = "VariableUse::parse_ctx", skip_all, ret)]
     pub fn parse_ctx<'a>(
         _ctx: &Typer<'a>,
         tokens: &[(Span, Token<'a>)],
@@ -1360,13 +1533,14 @@ mod parseable {
 
     use crate::{
         parser::{AstNode, FunctionDecl, ParseError, ParseResult, Parser},
-        tokenizer::{Span, Token, Tokenizer},
         types::{
-            BlockValue, ComplexType, ComplexTypeDecl, ComplexTypeID, ComplexTypeName, ComplexValue,
-            Enum, FunctionCall, Number, Primitive, PrimitiveID, Struct, StructDecl, TypeID, Typer,
-            Value, Variable, Visibility,
+            Block, BlockValue, ComplexType, ComplexTypeDecl, ComplexTypeID, ComplexTypeName,
+            ComplexValue, Enum, FunctionCall, Number, Primitive, PrimitiveID, Struct, StructDecl,
+            TypeID, Typer, Value, Variable, Visibility,
         },
     };
+
+    use tokenizer::{Span, Token, Tokenizer};
 
     #[inline]
     fn setup_logger() {
@@ -1387,7 +1561,7 @@ mod parseable {
             panic!()
         };
 
-        for (val) in &function.block {
+        for val in function.block.iter() {
             assert_eq!(
                 val,
                 &BlockValue::VariableDecl((
@@ -1431,7 +1605,7 @@ mod parseable {
             panic!()
         };
 
-        for (val) in &function.block {
+        for val in function.block.iter() {
             assert_eq!(
                 val,
                 &BlockValue::VariableDecl((
@@ -1478,7 +1652,7 @@ mod parseable {
                 (true, "i", PrimitiveID::I32.into()),
                 (false, "bar", PrimitiveID::String.into()),
             ]),
-            block: vec![],
+            block: Block::default(),
             return_type: Some(PrimitiveID::I32.into()),
         };
 
@@ -1734,7 +1908,7 @@ mod parseable {
             _ => panic!(),
         };
 
-        for val in &decl.block {
+        for val in decl.block.iter() {
             match &val {
                 BlockValue::VariableDecl(variable) => {}
                 t => panic!("{t:?}"),

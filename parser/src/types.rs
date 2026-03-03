@@ -10,13 +10,12 @@ use std::{
 
 use tracing::{debug, error, info, instrument, trace, warn};
 
-use crate::{
-    parser::{ParseError, ParseResult},
-    tokenizer::{Span, Token},
-};
+use crate::parser::{ParseError, ParseResult};
+
+use tokenizer::{Span, Token};
 
 #[derive(Debug, Clone)]
-pub(crate) struct Typer<'a> {
+pub struct Typer<'a> {
     types: HashMap<&'a str, ComplexTypeID>,
     type_ids: HashMap<ComplexTypeID, ComplexType<'a>>,
     next_id: ComplexTypeID,
@@ -114,28 +113,28 @@ pub enum TypeID {
     Complex(ComplexTypeID),
 }
 
-impl From<crate::tokenizer::TypeID> for TypeID {
-    fn from(value: crate::tokenizer::TypeID) -> Self {
+impl From<tokenizer::TypeID> for TypeID {
+    fn from(value: tokenizer::TypeID) -> Self {
         match value {
-            crate::tokenizer::TypeID::I8 => Self::Primitive(PrimitiveID::I8),
-            crate::tokenizer::TypeID::I16 => Self::Primitive(PrimitiveID::I16),
-            crate::tokenizer::TypeID::I32 => Self::Primitive(PrimitiveID::I32),
-            crate::tokenizer::TypeID::I64 => Self::Primitive(PrimitiveID::I64),
-            crate::tokenizer::TypeID::U8 => Self::Primitive(PrimitiveID::U8),
-            crate::tokenizer::TypeID::U16 => Self::Primitive(PrimitiveID::U16),
-            crate::tokenizer::TypeID::U32 => Self::Primitive(PrimitiveID::U32),
-            crate::tokenizer::TypeID::U64 => Self::Primitive(PrimitiveID::U64),
-            crate::tokenizer::TypeID::F32 => Self::Primitive(PrimitiveID::F32),
-            crate::tokenizer::TypeID::F64 => Self::Primitive(PrimitiveID::F64),
-            crate::tokenizer::TypeID::String => Self::Primitive(PrimitiveID::String),
-            crate::tokenizer::TypeID::QuotedString => Self::Primitive(PrimitiveID::String),
-            crate::tokenizer::TypeID::Bool => Self::Primitive(PrimitiveID::Bool),
+            tokenizer::TypeID::I8 => Self::Primitive(PrimitiveID::I8),
+            tokenizer::TypeID::I16 => Self::Primitive(PrimitiveID::I16),
+            tokenizer::TypeID::I32 => Self::Primitive(PrimitiveID::I32),
+            tokenizer::TypeID::I64 => Self::Primitive(PrimitiveID::I64),
+            tokenizer::TypeID::U8 => Self::Primitive(PrimitiveID::U8),
+            tokenizer::TypeID::U16 => Self::Primitive(PrimitiveID::U16),
+            tokenizer::TypeID::U32 => Self::Primitive(PrimitiveID::U32),
+            tokenizer::TypeID::U64 => Self::Primitive(PrimitiveID::U64),
+            tokenizer::TypeID::F32 => Self::Primitive(PrimitiveID::F32),
+            tokenizer::TypeID::F64 => Self::Primitive(PrimitiveID::F64),
+            tokenizer::TypeID::String => Self::Primitive(PrimitiveID::String),
+            tokenizer::TypeID::QuotedString => Self::Primitive(PrimitiveID::String),
+            tokenizer::TypeID::Bool => Self::Primitive(PrimitiveID::Bool),
         }
     }
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
-pub(crate) enum Number {
+pub enum Number {
     I8(i8),
     I16(i16),
     I32(i32),
@@ -283,7 +282,7 @@ impl<'a> From<Number> for Primitive<'a> {
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Clone, Copy)]
-pub(crate) enum Primitive<'a> {
+pub enum Primitive<'a> {
     Number(Number),
     String(&'a str),
     Bool(bool),
@@ -504,7 +503,7 @@ impl PrimitiveID {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Array<'a> {
+pub struct Array<'a> {
     type_id: TypeID,
     values: Vec<Value<'a>>,
 }
@@ -533,20 +532,20 @@ impl<'a> Array<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) struct Enum {
+pub struct Enum {
     pub(crate) id: ComplexTypeID,
     pub(crate) field: Number,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
-pub(crate) enum Visibility {
+pub enum Visibility {
     #[default]
     Private,
     Pub,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum ComplexTypeName<'a> {
+pub enum ComplexTypeName<'a> {
     Known(&'a str),
     Unknown(&'a str),
 }
@@ -566,7 +565,7 @@ impl<'a> ComplexTypeName<'a> {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct StructDecl<'a> {
+pub struct StructDecl<'a> {
     pub(crate) visibility: Visibility,
 
     pub(crate) fields: HashMap<&'a str, TypeID>,
@@ -580,7 +579,7 @@ pub(crate) struct Frame<'a> {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub(crate) struct Struct<'a> {
+pub struct Struct<'a> {
     pub(crate) name: ComplexTypeName<'a>,
     pub(crate) fields: Vec<(&'a str, Value<'a>)>,
 }
@@ -595,14 +594,14 @@ impl<'a> Struct<'a> {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct EnumDecl<'a> {
+pub struct EnumDecl<'a> {
     pub(crate) visibility: Visibility,
 
     pub(crate) fields: HashMap<&'a str, Number>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Variable<'a> {
+pub struct Variable<'a> {
     pub(crate) typeid: TypeID,
     pub(crate) mutable: bool,
     pub(crate) val: VariableValue<'a>,
@@ -619,12 +618,12 @@ impl<'a> Variable<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct VariableType {
+pub struct VariableType {
     typ: TypeID,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Operation {
+pub enum Operation {
     Add,
     Sub,
     Mult,
@@ -637,38 +636,123 @@ pub(crate) enum Operation {
     DivAssign,
 }
 
-#[derive(Debug, PartialEq)]
-pub(crate) enum BlockValue<'a> {
-    VariableDecl((&'a str, Variable<'a>)),
-    VariableReAssignment((&'a str, VariableValue<'a>)),
-    Block(Vec<BlockValue<'a>>),
+#[derive(Debug, PartialEq, Clone)]
+pub enum Condition {
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    LessthanOrEqual,
+    GreaterThanOrEqual,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ConditionItem<'a> {
+    Item(VariableValue<'a>),
+    Condition(Condition),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct IfStatement<'a> {
+    pub(crate) cond: Vec<ConditionItem<'a>>,
+    pub(crate) block: Block<'a>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ElseIfStatement<'a> {
+    pub(crate) cond: Vec<ConditionItem<'a>>,
+    pub(crate) block: Block<'a>,
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub(crate) struct FunctionDecl<'a> {
+pub struct Else<'a> {
+    pub(crate) block: Block<'a>,
+}
+
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct Block<'a> {
+    pub(crate) values: Vec<BlockValue<'a>>,
+}
+
+impl<'a> Block<'a> {
+    pub fn push(&mut self, value: BlockValue<'a>) {
+        self.values.push(value);
+    }
+
+    pub fn pop(&mut self) -> Option<BlockValue<'a>> {
+        self.values.pop()
+    }
+
+    pub const fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn iter_mut(&mut self) -> core::slice::IterMut<BlockValue<'a>> {
+        self.values.iter_mut()
+    }
+
+    pub fn iter(&self) -> core::slice::Iter<BlockValue<'a>> {
+        self.values.iter()
+    }
+
+    pub fn last(&self) -> Option<&BlockValue<'a>> {
+        self.values.last()
+    }
+
+    pub fn last_mut(&mut self) -> Option<&mut BlockValue<'a>> {
+        self.values.last_mut()
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum BlockValue<'a> {
+    VariableDecl((&'a str, Variable<'a>)),
+    VariableReAssignment((&'a str, VariableValue<'a>)),
+    Return(VariableValue<'a>),
+    IfStatement(IfStatement<'a>),
+    Else(Block<'a>),
+    ElseIf(ElseIfStatement<'a>),
+    Block(Block<'a>),
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct FunctionDecl<'a> {
     pub(crate) visibility: Visibility,
     pub(crate) name: &'a str,
-
     pub(crate) args: Option<Vec<(bool, &'a str, TypeID)>>,
-    pub(crate) block: Vec<(BlockValue<'a>)>,
-
     pub(crate) return_type: Option<TypeID>,
+
+    pub(crate) block: Block<'a>,
+}
+
+impl<'a> FunctionDecl<'a> {
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    pub fn args(&self) -> Option<&[(bool, &'a str, TypeID)]> {
+        self.args.as_deref()
+    }
+
+    pub fn block(&self) -> &Block<'a> {
+        &self.block
+    }
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct FunctionCall<'a> {
+pub struct FunctionCall<'a> {
     pub(crate) name: &'a str,
     pub(crate) args: Vec<Value<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ComplexTypeDecl<'a> {
+pub enum ComplexTypeDecl<'a> {
     StructDecl(StructDecl<'a>),
     Enum(EnumDecl<'a>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum ComplexValue<'a> {
+pub enum ComplexValue<'a> {
     Struct(Struct<'a>),
     Enum(Enum),
 }
@@ -709,7 +793,7 @@ impl<'a> From<ComplexValue<'a>> for Value<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum Value<'a> {
+pub enum Value<'a> {
     Primitive(Primitive<'a>),
     Complex(ComplexValue<'a>),
 }
@@ -732,7 +816,7 @@ impl<'a> Value<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) enum TypeDeclReturn<'a> {
+pub enum TypeDeclReturn<'a> {
     Enum(EnumDecl<'a>),
     Struct(StructDecl<'a>),
     Function(FunctionDecl<'a>),
@@ -742,7 +826,7 @@ pub(crate) enum TypeDeclReturn<'a> {
 pub(crate) struct TypeDecl();
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum VariableValue<'a> {
+pub enum VariableValue<'a> {
     Value(Value<'a>),
     Name(&'a str),
     Expr(Vec<MathItem<'a>>),
@@ -752,7 +836,7 @@ pub(crate) enum VariableValue<'a> {
 pub(crate) struct MathExpr;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum MathItem<'a> {
+pub enum MathItem<'a> {
     Prim(Primitive<'a>),
     Op(Operation),
 }
@@ -761,7 +845,7 @@ pub(crate) enum MathItem<'a> {
 pub(crate) struct VariableUse;
 
 #[derive(Debug)]
-pub(crate) enum VariableValueReturn<'a> {
+pub enum VariableValueReturn<'a> {
     Assignment(VariableValue<'a>),
     ReAssignment(VariableValue<'a>),
     Expr(Vec<MathItem<'a>>),
