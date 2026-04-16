@@ -93,7 +93,7 @@ impl<'a> Typer<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ComplexType<'a> {
     Known(ComplexTypeDecl<'a>),
     Unknown(ComplexTypeDecl<'a>),
@@ -575,17 +575,20 @@ pub struct StructDecl<'a> {
 pub(crate) struct Frame<'a> {
     pub(crate) pending_name: Option<&'a str>,
     pub(crate) name: &'a str,
-    pub(crate) fields: Vec<(&'a str, Value<'a>)>,
+    pub(crate) fields: Vec<(usize, &'a str, Value<'a>)>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct Struct<'a> {
     pub(crate) name: ComplexTypeName<'a>,
-    pub(crate) fields: Vec<(&'a str, Value<'a>)>,
+    pub(crate) fields: Vec<(usize, &'a str, Value<'a>)>,
 }
 
 impl<'a> Struct<'a> {
-    pub fn new(name: ComplexTypeName<'a>, fields: Option<Vec<(&'a str, Value<'a>)>>) -> Self {
+    pub fn new(
+        name: ComplexTypeName<'a>,
+        fields: Option<Vec<(usize, &'a str, Value<'a>)>>,
+    ) -> Self {
         Self {
             name,
             fields: fields.unwrap_or_default(),
@@ -608,11 +611,27 @@ pub struct Variable<'a> {
 }
 
 impl<'a> Variable<'a> {
-    fn new(typeid: TypeID, mutable: bool, val: VariableValue<'a>) -> Self {
+    pub fn new(typeid: TypeID, mutable: bool, val: VariableValue<'a>) -> Self {
         Self {
             typeid,
             mutable,
             val,
+        }
+    }
+
+    pub fn from_value(value: Value<'a>, mutable: bool, typer: Option<&Typer<'a>>) -> Self {
+        let typeid = match &value {
+            Value::Primitive(primitive) => TypeID::Primitive(primitive.id()),
+            Value::Complex(complex_value) => TypeID::Complex(match complex_value {
+                ComplexValue::Struct(decl) => typer.unwrap().id(decl.name.name()).unwrap(),
+                ComplexValue::Enum(enu) => enu.id,
+            }),
+        };
+
+        Self {
+            typeid,
+            mutable,
+            val: VariableValue::Value(value),
         }
     }
 }
@@ -687,11 +706,11 @@ impl<'a> Block<'a> {
         self.values.len()
     }
 
-    pub fn iter_mut(&mut self) -> core::slice::IterMut<BlockValue<'a>> {
+    pub fn iter_mut(&'_ mut self) -> core::slice::IterMut<'_, BlockValue<'a>> {
         self.values.iter_mut()
     }
 
-    pub fn iter(&self) -> core::slice::Iter<BlockValue<'a>> {
+    pub fn iter(&'_ self) -> core::slice::Iter<'_, BlockValue<'a>> {
         self.values.iter()
     }
 
@@ -713,6 +732,7 @@ pub enum BlockValue<'a> {
     Else(Block<'a>),
     ElseIf(ElseIfStatement<'a>),
     Block(Block<'a>),
+    FunctionCall(FunctionCall<'a>),
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -722,7 +742,7 @@ pub struct FunctionDecl<'a> {
     pub(crate) args: Option<Vec<(bool, &'a str, TypeID)>>,
     pub(crate) return_type: Option<TypeID>,
 
-    pub(crate) block: Block<'a>,
+    pub(crate) block: Vec<(usize, BlockValue<'a>)>,
 }
 
 impl<'a> FunctionDecl<'a> {
@@ -734,15 +754,16 @@ impl<'a> FunctionDecl<'a> {
         self.args.as_deref()
     }
 
-    pub fn block(&self) -> &Block<'a> {
+    pub fn block(&self) -> &Vec<(usize, BlockValue<'a>)> {
         &self.block
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct FunctionCall<'a> {
     pub(crate) name: &'a str,
     pub(crate) args: Vec<Value<'a>>,
+    pub(crate) return_type: Option<TypeID>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -764,7 +785,7 @@ impl<'a> ComplexValue<'a> {
                 let decl = struc
                     .fields
                     .iter()
-                    .map(|f| (f.0, f.1.id(None).unwrap()))
+                    .map(|f| (f.1, f.2.id(None).unwrap()))
                     .collect::<HashMap<&'a str, TypeID>>();
                 ComplexTypeDecl::StructDecl(StructDecl {
                     visibility: Visibility::Private,
@@ -827,9 +848,11 @@ pub(crate) struct TypeDecl();
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VariableValue<'a> {
+    StructAccess(Vec<(&'a str, &'a str)>),
     Value(Value<'a>),
     Name(&'a str),
     Expr(Vec<MathItem<'a>>),
+    FunctionCall(FunctionCall<'a>),
 }
 
 #[derive(Debug)]
