@@ -1,3 +1,4 @@
+#![allow(clippy::match_bool)]
 use std::fmt::Display;
 
 use tracing::{debug, error, instrument, trace};
@@ -134,8 +135,7 @@ impl Ident {
 
     fn inner(&self) -> usize {
         match self {
-            Ident::Word(n) => *n,
-            Ident::Number(n) => *n,
+            Ident::Word(n) | Ident::Number(n) => *n,
         }
     }
 }
@@ -147,6 +147,7 @@ pub struct Span {
 }
 
 impl Span {
+    #[must_use]
     pub fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
@@ -164,6 +165,7 @@ pub struct TokenIterator<'a> {
 }
 
 impl<'a> TokenIterator<'a> {
+    #[must_use]
     pub fn new(data: &'a str) -> Self {
         Self { data, idx: 0 }
     }
@@ -198,6 +200,8 @@ impl<'a> Iterator for TokenIterator<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
+    /// # Panics
+    /// if there is an unknown token
     pub fn tokenize(data: &'a str) -> Self {
         debug!("{data:?}");
 
@@ -207,9 +211,8 @@ impl<'a> Tokenizer<'a> {
 
         for (span, wrd) in iter {
             trace!("found {prev} {wrd}");
-            if wrd == Token::Unknown {
-                panic!("found unknown token");
-            }
+
+            assert!(wrd != Token::Unknown, "found unknown token");
 
             if let Token::Str(s) = wrd {
                 let t = match s {
@@ -281,7 +284,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// works as an iterator, the number it returns is an increment amount, you can give it a big
-    /// string and repeatedly call next() on it and just increment the start of your slice to get
+    /// string and repeatedly call `next()` on it and just increment the start of your slice to get
     /// the next word
     // #[instrument(skip_all, ret)]
     fn next_token(source: &'a str) -> Option<(Span, Token<'a>)> {
@@ -301,7 +304,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
 
-                ' ' => {
+                ' ' | '\n' => {
                     if let Some(iden) = ident {
                         return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
                     }
@@ -310,7 +313,7 @@ impl<'a> Tokenizer<'a> {
                 '.' => match ident {
                     Some(iden) => match iden {
                         // if number dont return here because if its 10.0 it would return 10
-                        Ident::Number(_n) => continue,
+                        Ident::Number(_n) => {}
                         Ident::Word(_w) => {
                             return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
                         }
@@ -318,13 +321,7 @@ impl<'a> Tokenizer<'a> {
                     None => return Some((Span::new(i, i + 1), Token::Dot)),
                 },
 
-                '\n' => {
-                    if let Some(iden) = ident {
-                        return Some((Span::new(iden.inner(), i), iden.into_str(source, i)));
-                    }
-                }
-
-                '_' => continue,
+                '_' => {}
 
                 '"' => match quoted {
                     false => {
@@ -360,6 +357,7 @@ impl<'a> Tokenizer<'a> {
         None
     }
 
+    #[must_use]
     pub fn tokens(&self) -> &[(Span, Token<'a>)] {
         &self.tokens
     }

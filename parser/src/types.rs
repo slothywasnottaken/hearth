@@ -26,7 +26,7 @@ pub struct ComplexTypeID {
     id: usize,
 }
 
-impl<'a> Default for Typer<'a> {
+impl Default for Typer<'_> {
     fn default() -> Self {
         Self {
             types: HashMap::default(),
@@ -99,7 +99,7 @@ pub enum ComplexType<'a> {
     Unknown(ComplexTypeDecl<'a>),
 }
 
-impl<'a> ComplexType<'a> {
+impl ComplexType<'_> {
     pub fn inner(&self) -> &ComplexTypeDecl<'_> {
         match self {
             Self::Known(s) | Self::Unknown(s) => s,
@@ -126,8 +126,9 @@ impl From<tokenizer::TypeID> for TypeID {
             tokenizer::TypeID::U64 => Self::Primitive(PrimitiveID::U64),
             tokenizer::TypeID::F32 => Self::Primitive(PrimitiveID::F32),
             tokenizer::TypeID::F64 => Self::Primitive(PrimitiveID::F64),
-            tokenizer::TypeID::String => Self::Primitive(PrimitiveID::String),
-            tokenizer::TypeID::QuotedString => Self::Primitive(PrimitiveID::String),
+            tokenizer::TypeID::String | tokenizer::TypeID::QuotedString => {
+                Self::Primitive(PrimitiveID::String)
+            }
             tokenizer::TypeID::Bool => Self::Primitive(PrimitiveID::Bool),
         }
     }
@@ -275,7 +276,7 @@ impl Number {
     }
 }
 
-impl<'a> From<Number> for Primitive<'a> {
+impl From<Number> for Primitive<'_> {
     fn from(value: Number) -> Self {
         Self::Number(value)
     }
@@ -300,8 +301,7 @@ impl<'a> Primitive<'a> {
     pub fn number(&self) -> Option<&Number> {
         match self {
             Self::Number(n) => Some(n),
-            Self::String(_) => None,
-            Self::Bool(_) => None,
+            Self::String(_) | Self::Bool(_) => None,
         }
     }
 
@@ -321,7 +321,7 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::I16) => {
                 Ok(Primitive::Number(Number::I16(match number {
-                    Number::I8(n) => *n as i16,
+                    Number::I8(n) => i16::from(*n),
                     Number::I16(n) => *n,
                     Number::I32(n) => i16::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
                     Number::I64(n) => i16::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
@@ -330,8 +330,8 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::I32) => {
                 Ok(Primitive::Number(Number::I32(match number {
-                    Number::I8(n) => *n as i32,
-                    Number::I16(n) => *n as i32,
+                    Number::I8(n) => i32::from(*n),
+                    Number::I16(n) => i32::from(*n),
                     Number::I32(n) => *n,
                     Number::I64(n) => i32::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
                     t => panic!("{t:?}"),
@@ -339,9 +339,9 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::I64) => {
                 Ok(Primitive::Number(Number::I64(match number {
-                    Number::I8(n) => *n as i64,
-                    Number::I16(n) => *n as i64,
-                    Number::I32(n) => *n as i64,
+                    Number::I8(n) => i64::from(*n),
+                    Number::I16(n) => i64::from(*n),
+                    Number::I32(n) => i64::from(*n),
                     Number::I64(n) => *n,
                     Number::U64(n) => i64::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
                     t => panic!("{t:?}"),
@@ -359,7 +359,7 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::U16) => {
                 Ok(Primitive::Number(Number::U16(match number {
-                    Number::U8(n) => *n as u16,
+                    Number::U8(n) => u16::from(*n),
                     Number::U16(n) => *n,
                     Number::U32(n) => u16::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
                     Number::U64(n) => u16::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
@@ -368,8 +368,8 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::U32) => {
                 Ok(Primitive::Number(Number::U32(match number {
-                    Number::U8(n) => *n as u32,
-                    Number::U16(n) => *n as u32,
+                    Number::U8(n) => u32::from(*n),
+                    Number::U16(n) => u32::from(*n),
                     Number::U32(n) => *n,
                     Number::U64(n) => u32::try_from(*n).map_err(|_| ParseError::IncorrectType)?,
                     _ => return Err(ParseError::IncorrectType),
@@ -377,9 +377,9 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::U64) => {
                 Ok(Primitive::Number(Number::U64(match number {
-                    Number::U8(n) => *n as u64,
-                    Number::U16(n) => *n as u64,
-                    Number::U32(n) => *n as u64,
+                    Number::U8(n) => u64::from(*n),
+                    Number::U16(n) => u64::from(*n),
+                    Number::U32(n) => u64::from(*n),
                     Number::U64(n) => *n,
                     _ => return Err(ParseError::IncorrectType),
                 })))
@@ -392,7 +392,7 @@ impl<'a> Primitive<'a> {
             }
             (Primitive::Number(number), PrimitiveID::F64) => {
                 Ok(Primitive::Number(Number::F64(match number {
-                    Number::F32(n) => *n as f64,
+                    Number::F32(n) => f64::from(*n),
                     Number::F64(n) => *n,
                     _ => return Err(ParseError::IncorrectType),
                 })))
@@ -400,19 +400,24 @@ impl<'a> Primitive<'a> {
             (Primitive::Number(number), PrimitiveID::String) => {
                 return Err(ParseError::IncorrectType);
             }
-            (Primitive::String(_), PrimitiveID::I8)
-            | (Primitive::String(_), PrimitiveID::I16)
-            | (Primitive::String(_), PrimitiveID::I32)
-            | (Primitive::String(_), PrimitiveID::I64)
-            | (Primitive::String(_), PrimitiveID::U8)
-            | (Primitive::String(_), PrimitiveID::U16)
-            | (Primitive::String(_), PrimitiveID::U32)
-            | (Primitive::String(_), PrimitiveID::U64)
-            | (Primitive::String(_), PrimitiveID::F32)
-            | (Primitive::String(_), PrimitiveID::F64) => return Err(ParseError::IncorrectType),
+            (
+                Primitive::String(_),
+                PrimitiveID::I8
+                | PrimitiveID::I16
+                | PrimitiveID::I32
+                | PrimitiveID::I64
+                | PrimitiveID::U8
+                | PrimitiveID::U16
+                | PrimitiveID::U32
+                | PrimitiveID::U64
+                | PrimitiveID::F32
+                | PrimitiveID::F64,
+            )
+            | (Primitive::Bool(_), _) => return Err(ParseError::IncorrectType),
             (Primitive::String(s), PrimitiveID::String) => Ok(Primitive::String(s)),
-            (Primitive::Number(_), PrimitiveID::Bool)
-            | (Primitive::String(_), PrimitiveID::Bool) => return Err(ParseError::IncorrectType),
+            (Primitive::Number(_) | Primitive::String(_), PrimitiveID::Bool) => {
+                return Err(ParseError::IncorrectType);
+            }
             (Primitive::Bool(b), PrimitiveID::Bool) => return Ok(Primitive::Bool(*b)),
             (Primitive::Bool(_), _) => return Err(ParseError::IncorrectType),
         }
@@ -452,50 +457,43 @@ impl From<PrimitiveID> for TypeID {
 }
 
 impl PrimitiveID {
-    pub fn can_fit(&self, other: Self) -> bool {
+    pub fn can_fit(self, other: Self) -> bool {
         info!(?self, ?other);
         matches!(
             (self, other),
-            (PrimitiveID::I8, PrimitiveID::I8)
-                | (PrimitiveID::I16, PrimitiveID::I8)
-                | (PrimitiveID::I16, PrimitiveID::I16)
-                | (PrimitiveID::I16, PrimitiveID::U8)
-                | (PrimitiveID::I16, PrimitiveID::U16)
-                | (PrimitiveID::I32, PrimitiveID::I8)
-                | (PrimitiveID::I32, PrimitiveID::I16)
-                | (PrimitiveID::I32, PrimitiveID::I32)
-                | (PrimitiveID::I32, PrimitiveID::U8)
-                | (PrimitiveID::I32, PrimitiveID::U16)
-                | (PrimitiveID::I32, PrimitiveID::U32)
-                | (PrimitiveID::I64, PrimitiveID::I8)
-                | (PrimitiveID::I64, PrimitiveID::I16)
-                | (PrimitiveID::I64, PrimitiveID::I32)
-                | (PrimitiveID::I64, PrimitiveID::I64)
-                | (PrimitiveID::I64, PrimitiveID::U8)
-                | (PrimitiveID::I64, PrimitiveID::U16)
-                | (PrimitiveID::I64, PrimitiveID::U32)
-                | (PrimitiveID::U8, PrimitiveID::I8)
-                | (PrimitiveID::U8, PrimitiveID::U8)
-                | (PrimitiveID::U16, PrimitiveID::I8)
-                | (PrimitiveID::U16, PrimitiveID::I16)
-                | (PrimitiveID::U16, PrimitiveID::U8)
-                | (PrimitiveID::U16, PrimitiveID::U16)
-                | (PrimitiveID::U32, PrimitiveID::I8)
-                | (PrimitiveID::U32, PrimitiveID::I16)
-                | (PrimitiveID::U32, PrimitiveID::I32)
-                | (PrimitiveID::U32, PrimitiveID::U8)
-                | (PrimitiveID::U32, PrimitiveID::U16)
-                | (PrimitiveID::U32, PrimitiveID::U32)
-                | (PrimitiveID::U64, PrimitiveID::I8)
-                | (PrimitiveID::U64, PrimitiveID::I16)
-                | (PrimitiveID::U64, PrimitiveID::I32)
-                | (PrimitiveID::U64, PrimitiveID::I64)
-                | (PrimitiveID::U64, PrimitiveID::U8)
-                | (PrimitiveID::U64, PrimitiveID::U16)
-                | (PrimitiveID::U64, PrimitiveID::U32)
+            (
+                PrimitiveID::I8
+                    | PrimitiveID::I16
+                    | PrimitiveID::I32
+                    | PrimitiveID::I64
+                    | PrimitiveID::U8
+                    | PrimitiveID::U16
+                    | PrimitiveID::U32
+                    | PrimitiveID::U64,
+                PrimitiveID::I8
+            ) | (
+                PrimitiveID::I16
+                    | PrimitiveID::I32
+                    | PrimitiveID::I64
+                    | PrimitiveID::U16
+                    | PrimitiveID::U32
+                    | PrimitiveID::U64,
+                PrimitiveID::I16 | PrimitiveID::U16
+            ) | (
+                PrimitiveID::I16
+                    | PrimitiveID::I32
+                    | PrimitiveID::I64
+                    | PrimitiveID::U8
+                    | PrimitiveID::U16
+                    | PrimitiveID::U32
+                    | PrimitiveID::U64,
+                PrimitiveID::U8
+            ) | (
+                PrimitiveID::I32 | PrimitiveID::I64 | PrimitiveID::U32 | PrimitiveID::U64,
+                PrimitiveID::I32 | PrimitiveID::U32
+            ) | (PrimitiveID::I64 | PrimitiveID::U64, PrimitiveID::I64)
                 | (PrimitiveID::U64, PrimitiveID::U64)
-                | (PrimitiveID::F32, PrimitiveID::F32)
-                | (PrimitiveID::F64, PrimitiveID::F32)
+                | (PrimitiveID::F32 | PrimitiveID::F64, PrimitiveID::F32)
                 | (PrimitiveID::F64, PrimitiveID::F64)
                 | (PrimitiveID::String, PrimitiveID::String)
         )
@@ -519,9 +517,7 @@ impl<'a> Array<'a> {
     pub fn push(&mut self, value: Value<'a>) {
         match &value {
             Value::Primitive(primitive) => {
-                if self.type_id != TypeID::Primitive(primitive.id()) {
-                    panic!()
-                }
+                assert!(self.type_id == TypeID::Primitive(primitive.id()));
             }
             Value::Complex(_complex_value) => {
                 panic!()
@@ -550,7 +546,7 @@ pub enum ComplexTypeName<'a> {
     Unknown(&'a str),
 }
 
-impl<'a> Default for ComplexTypeName<'a> {
+impl Default for ComplexTypeName<'_> {
     fn default() -> Self {
         Self::Unknown("")
     }
@@ -608,6 +604,10 @@ pub struct Variable<'a> {
     pub(crate) typeid: TypeID,
     pub(crate) mutable: bool,
     pub(crate) val: VariableValue<'a>,
+}
+
+impl Display for Variable<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {}
 }
 
 impl<'a> Variable<'a> {
@@ -754,7 +754,7 @@ impl<'a> FunctionDecl<'a> {
         self.args.as_deref()
     }
 
-    pub fn block(&self) -> &Vec<(usize, BlockValue<'a>)> {
+    pub fn block(&self) -> &[(usize, BlockValue<'a>)] {
         &self.block
     }
 }
@@ -819,7 +819,7 @@ pub enum Value<'a> {
     Complex(ComplexValue<'a>),
 }
 
-impl<'a> Value<'a> {
+impl Value<'_> {
     pub fn id(&self, typer: Option<&Typer>) -> Option<TypeID> {
         match self {
             Value::Primitive(prim) => Some(TypeID::Primitive(prim.id())),
@@ -847,12 +847,44 @@ pub enum TypeDeclReturn<'a> {
 pub(crate) struct TypeDecl();
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct StructAccess<'a> {
+    name: &'a str,
+    fields: Vec<&'a str>,
+}
+
+impl<'a> StructAccess<'a> {
+    pub fn new(name: &'a str, fields: Vec<&'a str>) -> Self {
+        Self { name, fields }
+    }
+
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    pub fn fields(&self) -> &[&str] {
+        &self.fields
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum VariableValue<'a> {
-    StructAccess(Vec<(&'a str, &'a str)>),
+    StructAccess(StructAccess<'a>),
     Value(Value<'a>),
     Name(&'a str),
     Expr(Vec<MathItem<'a>>),
     FunctionCall(FunctionCall<'a>),
+}
+
+impl Display for VariableValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VariableValue::StructAccess(struct_access) => write!(f, "{struct_access}"),
+            VariableValue::Value(value) => write!(f, "{value}"),
+            VariableValue::Name(name) => write!(f, "{name}"),
+            VariableValue::Expr(math_items) => write!(f, "{math_items}"),
+            VariableValue::FunctionCall(function_call) => write!(f, "{function_call}"),
+        }
+    }
 }
 
 #[derive(Debug)]
