@@ -3,12 +3,13 @@
 use std::{
     collections::{HashMap, HashSet, hash_map::Iter},
     default,
-    fmt::{Debug, Display},
+    error::Error,
+    fmt::{Debug, Display, format},
     num::{ParseIntError, TryFromIntError},
     ops::Add,
 };
 
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, trace};
 
 use crate::parser::{ParseError, ParseResult};
 
@@ -21,9 +22,21 @@ pub struct Typer<'a> {
     next_id: ComplexTypeID,
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, PartialOrd, Eq, Clone, Copy)]
 pub struct ComplexTypeID {
     id: usize,
+}
+
+impl ComplexTypeID {
+    pub(crate) fn new(id: usize) -> Self {
+        Self { id }
+    }
+}
+
+impl Display for ComplexTypeID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.id)
+    }
 }
 
 impl Default for Typer<'_> {
@@ -44,7 +57,7 @@ impl Display for Typer<'_> {
 
 impl<'a> Typer<'a> {
     pub fn register_unknown(&mut self, type_name: &'a str, value: ComplexTypeDecl<'a>) {
-        trace!(?self, ?type_name, ?value);
+        debug!(?self, ?type_name, ?value);
         assert!(self.types.insert(type_name, self.next_id).is_none());
         assert!(
             self.type_ids
@@ -55,7 +68,7 @@ impl<'a> Typer<'a> {
     }
 
     pub fn register(&mut self, type_name: &'a str, value: ComplexTypeDecl<'a>) {
-        trace!(?self, ?type_name, ?value);
+        debug!(?self, ?type_name, ?value);
         assert!(self.types.insert(type_name, self.next_id).is_none());
         assert!(
             self.type_ids
@@ -74,7 +87,6 @@ impl<'a> Typer<'a> {
         self.type_ids.get(&id)
     }
 
-    #[instrument(name = "Typer::get")]
     pub fn get(&self, type_name: &str) -> Option<&ComplexType<'_>> {
         self.type_ids.get(self.types.get(type_name)?)
     }
@@ -107,10 +119,19 @@ impl ComplexType<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Clone, Copy)]
 pub enum TypeID {
     Primitive(PrimitiveID),
     Complex(ComplexTypeID),
+}
+
+impl Display for TypeID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeID::Primitive(primitive_id) => write!(f, "{primitive_id}"),
+            TypeID::Complex(complex_type_id) => write!(f, "{complex_type_id}"),
+        }
+    }
 }
 
 impl From<tokenizer::TypeID> for TypeID {
@@ -146,6 +167,23 @@ pub enum Number {
     U64(u64),
     F32(f32),
     F64(f64),
+}
+
+impl Display for Number {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Number::I8(num) => write!(f, "{num}"),
+            Number::I16(num) => write!(f, "{num}"),
+            Number::I32(num) => write!(f, "{num}"),
+            Number::I64(num) => write!(f, "{num}"),
+            Number::U8(num) => write!(f, "{num}"),
+            Number::U16(num) => write!(f, "{num}"),
+            Number::U32(num) => write!(f, "{num}"),
+            Number::U64(num) => write!(f, "{num}"),
+            Number::F32(num) => write!(f, "{num}"),
+            Number::F64(num) => write!(f, "{num}"),
+        }
+    }
 }
 
 impl Eq for Number {}
@@ -289,6 +327,16 @@ pub enum Primitive<'a> {
     Bool(bool),
 }
 
+impl Display for Primitive<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Primitive::Number(number) => write!(f, "{number}"),
+            Primitive::String(val) => write!(f, "{val}"),
+            Primitive::Bool(val) => write!(f, "{val}"),
+        }
+    }
+}
+
 impl<'a> Primitive<'a> {
     pub fn id(&self) -> PrimitiveID {
         match self {
@@ -307,7 +355,6 @@ impl<'a> Primitive<'a> {
 
     /// dumb stupid hack to change struct fields in variable assignment (auto set to i64/f64/string) and convert it to the type declared in the struct decl
     // maps Foo {i:i32} -> let foo = Foo {i:0} (0 is auto set as i64) and needs to be set as a i32
-    #[instrument(name = "Primitive::coerce", err)]
     pub fn coerce(&self, id: PrimitiveID) -> Result<Primitive<'a>, ParseError> {
         match (self, id) {
             (Primitive::Number(number), PrimitiveID::I8) => {
@@ -450,6 +497,27 @@ pub enum PrimitiveID {
     Bool,
 }
 
+impl Display for PrimitiveID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let v = match self {
+            PrimitiveID::I8 => "i8",
+            PrimitiveID::I16 => "i16",
+            PrimitiveID::I32 => "i32",
+            PrimitiveID::I64 => "i64",
+            PrimitiveID::U8 => "u8",
+            PrimitiveID::U16 => "u16",
+            PrimitiveID::U32 => "u32",
+            PrimitiveID::U64 => "u64",
+            PrimitiveID::F32 => "f32",
+            PrimitiveID::F64 => "f64",
+            PrimitiveID::String => "String",
+            PrimitiveID::Bool => "bool",
+        };
+
+        write!(f, "{v}")
+    }
+}
+
 impl From<PrimitiveID> for TypeID {
     fn from(value: PrimitiveID) -> Self {
         Self::Primitive(value)
@@ -458,7 +526,7 @@ impl From<PrimitiveID> for TypeID {
 
 impl PrimitiveID {
     pub fn can_fit(self, other: Self) -> bool {
-        info!(?self, ?other);
+        debug!(?self, ?other);
         matches!(
             (self, other),
             (
@@ -500,10 +568,10 @@ impl PrimitiveID {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Clone)]
 pub struct Array<'a> {
-    type_id: TypeID,
-    values: Vec<Value<'a>>,
+    pub(crate) type_id: TypeID,
+    pub(crate) values: Vec<Value<'a>>,
 }
 
 impl<'a> Array<'a> {
@@ -522,15 +590,40 @@ impl<'a> Array<'a> {
             Value::Complex(_complex_value) => {
                 panic!()
             }
+            Value::Array(_array) => {
+                panic!()
+            }
         }
         self.values.push(value);
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+impl Display for Array<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fmt = String::from('[');
+
+        for v in &self.values {
+            write!(f, "{v} ")?;
+        }
+
+        fmt.push(']');
+
+        write!(f, "{fmt}");
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub struct Enum {
     pub(crate) id: ComplexTypeID,
     pub(crate) field: Number,
+}
+
+impl Display for Enum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.field)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
@@ -540,10 +633,16 @@ pub enum Visibility {
     Pub,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub enum ComplexTypeName<'a> {
     Known(&'a str),
     Unknown(&'a str),
+}
+
+impl Display for ComplexTypeName<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
 }
 
 impl Default for ComplexTypeName<'_> {
@@ -574,10 +673,42 @@ pub(crate) struct Frame<'a> {
     pub(crate) fields: Vec<(usize, &'a str, Value<'a>)>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, PartialEq, PartialOrd, Eq, Clone)]
 pub struct Struct<'a> {
     pub(crate) name: ComplexTypeName<'a>,
     pub(crate) fields: Vec<(usize, &'a str, Value<'a>)>,
+}
+
+impl Display for Struct<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fmt = String::from(self.name.name());
+        fmt.push_str(" { ");
+
+        self.fields
+            .iter()
+            .enumerate()
+            .for_each(|(i, (lvl, name, val))| match val {
+                Value::Primitive(primitive) => {
+                    write!(f, "{name}: {primitive} ");
+                    if i + 1 < self.fields.len() {
+                        fmt.push(',');
+                    }
+                }
+                Value::Complex(complex_value) => {
+                    write!(f, "{name}: {complex_value} ");
+                    if i + 1 < self.fields.len() {
+                        fmt.push(',');
+                    }
+                }
+                Value::Array(array) => {
+                    write!(f, "{array}");
+                }
+            });
+
+        fmt.push_str("} ");
+
+        write!(f, "{fmt}")
+    }
 }
 
 impl<'a> Struct<'a> {
@@ -607,7 +738,9 @@ pub struct Variable<'a> {
 }
 
 impl Display for Variable<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.val)
+    }
 }
 
 impl<'a> Variable<'a> {
@@ -626,6 +759,7 @@ impl<'a> Variable<'a> {
                 ComplexValue::Struct(decl) => typer.unwrap().id(decl.name.name()).unwrap(),
                 ComplexValue::Enum(enu) => enu.id,
             }),
+            Value::Array(array) => array.type_id,
         };
 
         Self {
@@ -655,6 +789,25 @@ pub enum Operation {
     DivAssign,
 }
 
+impl Display for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Operation::Add => "+",
+            Operation::Sub => "-",
+            Operation::Mult => "*",
+            Operation::Div => "/",
+            Operation::Mod => "%",
+            Operation::Assign => "=",
+            Operation::AddAssign => "+=",
+            Operation::SubAssign => "-=",
+            Operation::MultAssign => "*=",
+            Operation::DivAssign => "/=",
+        };
+
+        write!(f, "{s}")
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Condition {
     Equal,
@@ -674,18 +827,11 @@ pub enum ConditionItem<'a> {
 #[derive(Debug, PartialEq, Clone)]
 pub struct IfStatement<'a> {
     pub(crate) cond: Vec<ConditionItem<'a>>,
-    pub(crate) block: Block<'a>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ElseIfStatement<'a> {
     pub(crate) cond: Vec<ConditionItem<'a>>,
-    pub(crate) block: Block<'a>,
-}
-
-#[derive(Debug, Default, PartialEq)]
-pub struct Else<'a> {
-    pub(crate) block: Block<'a>,
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -729,9 +875,9 @@ pub enum BlockValue<'a> {
     VariableReAssignment((&'a str, VariableValue<'a>)),
     Return(VariableValue<'a>),
     IfStatement(IfStatement<'a>),
-    Else(Block<'a>),
+    Else,
     ElseIf(ElseIfStatement<'a>),
-    Block(Block<'a>),
+    Block,
     FunctionCall(FunctionCall<'a>),
 }
 
@@ -766,16 +912,44 @@ pub struct FunctionCall<'a> {
     pub(crate) return_type: Option<TypeID>,
 }
 
+impl Display for FunctionCall<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fmt = String::default();
+
+        for v in &self.args {
+            write!(f, "{v}");
+        }
+
+        match self.return_type {
+            Some(typ) => {
+                write!(f, "{}({}) -> {}", self.name, fmt, typ)
+            }
+            None => {
+                write!(f, "{}({})", self.name, fmt)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComplexTypeDecl<'a> {
     StructDecl(StructDecl<'a>),
     Enum(EnumDecl<'a>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone)]
 pub enum ComplexValue<'a> {
     Struct(Struct<'a>),
     Enum(Enum),
+}
+
+impl Display for ComplexValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComplexValue::Struct(struc) => write!(f, "{struc}"),
+            ComplexValue::Enum(enu) => write!(f, "{enu}"),
+        }
+    }
 }
 
 impl<'a> ComplexValue<'a> {
@@ -798,7 +972,7 @@ impl<'a> ComplexValue<'a> {
     fn id(&'a self, typer: &'a Typer) -> Option<&'a ComplexType<'a>> {
         match self {
             ComplexValue::Struct(struc) => {
-                info!(?typer);
+                trace!(?typer);
                 typer.get(struc.name.name())
             }
             ComplexValue::Enum(_) => todo!(),
@@ -813,10 +987,63 @@ impl<'a> From<ComplexValue<'a>> for Value<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone)]
 pub enum Value<'a> {
     Primitive(Primitive<'a>),
     Complex(ComplexValue<'a>),
+    Array(Array<'a>),
+}
+
+impl Display for Value<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Primitive(primitive) => write!(f, "{primitive}"),
+            Value::Complex(complex_value) => match complex_value {
+                ComplexValue::Struct(struc) => {
+                    let mut fmt = String::default();
+                    let mut last = 0;
+                    write!(f, "{} {{", struc.name);
+                    for (i, (lvl, name, field)) in struc.fields.iter().enumerate() {
+                        if *lvl > last {
+                            write!(f, "{{");
+                        }
+                        if *lvl < last {
+                            write!(f, "}}");
+                        }
+                        if i < struc.fields.len().saturating_sub(1) {
+                            match field {
+                                Value::Primitive(primitive) => {
+                                    write!(f, "{name}: {primitive},");
+                                }
+                                Value::Complex(complex_value) => {
+                                    write!(f, "{name}: {complex_value},");
+                                }
+                                Value::Array(array) => {
+                                    write!(f, "{array},");
+                                }
+                            }
+                        } else {
+                            match field {
+                                Value::Primitive(primitive) => {
+                                    write!(f, "{name}: {primitive}");
+                                }
+                                Value::Complex(complex_value) => {
+                                    write!(f, "{name}: {complex_value}");
+                                }
+                                Value::Array(array) => {
+                                    write!(f, "{array}");
+                                }
+                            }
+                        }
+                        last = *lvl;
+                    }
+                    write!(f, "}}")
+                }
+                ComplexValue::Enum(enu) => write!(f, "{}", enu.field),
+            },
+            Value::Array(array) => write!(f, "{array}"),
+        }
+    }
 }
 
 impl Value<'_> {
@@ -832,6 +1059,7 @@ impl Value<'_> {
                     ComplexValue::Enum(enu) => Some(TypeID::Complex(enu.id)),
                 }
             }
+            Value::Array(array) => Some(array.type_id),
         }
     }
 }
@@ -850,6 +1078,18 @@ pub(crate) struct TypeDecl();
 pub struct StructAccess<'a> {
     name: &'a str,
     fields: Vec<&'a str>,
+}
+
+impl Display for StructAccess<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.", self.name);
+
+        for name in &self.fields {
+            write!(f, ".{name}");
+        }
+
+        Ok(())
+    }
 }
 
 impl<'a> StructAccess<'a> {
@@ -873,6 +1113,7 @@ pub enum VariableValue<'a> {
     Name(&'a str),
     Expr(Vec<MathItem<'a>>),
     FunctionCall(FunctionCall<'a>),
+    Empty,
 }
 
 impl Display for VariableValue<'_> {
@@ -881,8 +1122,15 @@ impl Display for VariableValue<'_> {
             VariableValue::StructAccess(struct_access) => write!(f, "{struct_access}"),
             VariableValue::Value(value) => write!(f, "{value}"),
             VariableValue::Name(name) => write!(f, "{name}"),
-            VariableValue::Expr(math_items) => write!(f, "{math_items}"),
+            VariableValue::Expr(math_items) => {
+                for expr in math_items {
+                    write!(f, "{expr},");
+                }
+
+                Ok(())
+            }
             VariableValue::FunctionCall(function_call) => write!(f, "{function_call}"),
+            VariableValue::Empty => write!(f, "Empty"),
         }
     }
 }
@@ -894,6 +1142,15 @@ pub(crate) struct MathExpr;
 pub enum MathItem<'a> {
     Prim(Primitive<'a>),
     Op(Operation),
+}
+
+impl Display for MathItem<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MathItem::Prim(primitive) => write!(f, "{primitive}"),
+            MathItem::Op(operation) => write!(f, "{operation}"),
+        }
+    }
 }
 
 #[derive(Debug)]

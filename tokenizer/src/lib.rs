@@ -1,7 +1,7 @@
 #![allow(clippy::match_bool)]
 use std::fmt::Display;
 
-use tracing::{debug, error, instrument, trace};
+use tracing::{error, trace};
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
 pub enum Token<'a> {
@@ -119,7 +119,6 @@ enum Ident {
 }
 
 impl Ident {
-    #[instrument]
     fn into_str<'a>(self, s: &'a str, idx: usize) -> Token<'a> {
         match self {
             Ident::Word(w) => {
@@ -181,7 +180,6 @@ impl<'a> Iterator for TokenIterator<'a> {
 
         let (idx, tok) = Tokenizer::next_token(&self.data[self.idx..])?;
 
-        // info!("looking at {:?}", &self.data[self.idx..self.idx + idx]);
         let mut span = Span {
             start: self.idx + idx.start,
             end: self.idx + idx.end,
@@ -190,8 +188,6 @@ impl<'a> Iterator for TokenIterator<'a> {
         if let Token::QuotedString(_) = tok {
             span.end -= 1;
         }
-
-        // info!(?idx, ?span);
 
         self.idx += idx.end;
 
@@ -203,7 +199,7 @@ impl<'a> Tokenizer<'a> {
     /// # Panics
     /// if there is an unknown token
     pub fn tokenize(data: &'a str) -> Self {
-        debug!("{data:?}");
+        trace!("{data:?}");
 
         let mut prev = Token::Unknown;
         let mut tokens: Vec<(Span, Token)> = vec![];
@@ -286,7 +282,6 @@ impl<'a> Tokenizer<'a> {
     /// works as an iterator, the number it returns is an increment amount, you can give it a big
     /// string and repeatedly call `next()` on it and just increment the start of your slice to get
     /// the next word
-    // #[instrument(skip_all, ret)]
     fn next_token(source: &'a str) -> Option<(Span, Token<'a>)> {
         let mut ident: Option<Ident> = None;
         let mut quoted = false;
