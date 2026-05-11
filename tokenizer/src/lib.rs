@@ -119,7 +119,7 @@ enum Ident {
 }
 
 impl Ident {
-    fn into_str<'a>(self, s: &'a str, idx: usize) -> Token<'a> {
+    fn into_str(self, s: &'_ str, idx: usize) -> Token<'_> {
         match self {
             Ident::Word(w) => {
                 if let Ok(id) = TypeID::try_from(&s[w..idx]) {

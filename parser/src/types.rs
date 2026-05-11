@@ -41,10 +41,11 @@ impl Display for ComplexTypeID {
 
 impl Default for Typer<'_> {
     fn default() -> Self {
+        assert!(PrimitiveID::Bool as usize == 11);
         Self {
             types: HashMap::default(),
             type_ids: HashMap::default(),
-            next_id: ComplexTypeID { id: 0 },
+            next_id: ComplexTypeID { id: 12 },
         }
     }
 }
@@ -120,37 +121,115 @@ impl ComplexType<'_> {
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Clone, Copy)]
-pub enum TypeID {
-    Primitive(PrimitiveID),
-    Complex(ComplexTypeID),
+pub struct TypeId {
+    pub(crate) id: usize,
+    pub(crate) array: bool,
 }
 
-impl Display for TypeID {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeID::Primitive(primitive_id) => write!(f, "{primitive_id}"),
-            TypeID::Complex(complex_type_id) => write!(f, "{complex_type_id}"),
+impl TypeId {
+    pub fn as_primitive(&self) -> PrimitiveID {
+        match self.id {
+            0 => PrimitiveID::I8,
+            1 => PrimitiveID::I16,
+            2 => PrimitiveID::I32,
+            3 => PrimitiveID::I64,
+
+            4 => PrimitiveID::U8,
+            5 => PrimitiveID::U16,
+            6 => PrimitiveID::U32,
+            7 => PrimitiveID::U64,
+
+            8 => PrimitiveID::F32,
+            9 => PrimitiveID::F64,
+
+            10 => PrimitiveID::String,
+
+            11 => PrimitiveID::Bool,
+            t => panic!("{t:?}"),
+        }
+    }
+
+    pub fn as_complex(&self) -> ComplexTypeID {
+        match self.id {
+            0..=11 => panic!("Expected complex type, found primitive"),
+            _ => ComplexTypeID { id: self.id },
         }
     }
 }
 
-impl From<tokenizer::TypeID> for TypeID {
+impl Display for TypeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let id = match self.id {
+            0 => PrimitiveID::I8,
+            1 => PrimitiveID::I16,
+            2 => PrimitiveID::I32,
+            3 => PrimitiveID::I64,
+
+            4 => PrimitiveID::U8,
+            5 => PrimitiveID::U16,
+            6 => PrimitiveID::U32,
+            7 => PrimitiveID::U64,
+
+            8 => PrimitiveID::F32,
+            9 => PrimitiveID::F64,
+
+            10 => PrimitiveID::String,
+
+            11 => PrimitiveID::Bool,
+            t => panic!("{t:?}"),
+        };
+
+        write!(f, "{id}")
+    }
+}
+
+impl From<PrimitiveID> for TypeId {
+    fn from(value: PrimitiveID) -> Self {
+        let id = match value {
+            PrimitiveID::I8 => 0,
+            PrimitiveID::I16 => 1,
+            PrimitiveID::I32 => 2,
+            PrimitiveID::I64 => 3,
+            PrimitiveID::U8 => 4,
+            PrimitiveID::U16 => 5,
+            PrimitiveID::U32 => 6,
+            PrimitiveID::U64 => 7,
+            PrimitiveID::F32 => 8,
+            PrimitiveID::F64 => 9,
+            PrimitiveID::String => 10,
+            PrimitiveID::Bool => 11,
+        };
+
+        Self { id, array: false }
+    }
+}
+
+impl From<ComplexTypeID> for TypeId {
+    fn from(value: ComplexTypeID) -> Self {
+        Self {
+            id: (PrimitiveID::Bool as usize) + value.id,
+            array: false,
+        }
+    }
+}
+
+impl From<tokenizer::TypeID> for TypeId {
     fn from(value: tokenizer::TypeID) -> Self {
         match value {
-            tokenizer::TypeID::I8 => Self::Primitive(PrimitiveID::I8),
-            tokenizer::TypeID::I16 => Self::Primitive(PrimitiveID::I16),
-            tokenizer::TypeID::I32 => Self::Primitive(PrimitiveID::I32),
-            tokenizer::TypeID::I64 => Self::Primitive(PrimitiveID::I64),
-            tokenizer::TypeID::U8 => Self::Primitive(PrimitiveID::U8),
-            tokenizer::TypeID::U16 => Self::Primitive(PrimitiveID::U16),
-            tokenizer::TypeID::U32 => Self::Primitive(PrimitiveID::U32),
-            tokenizer::TypeID::U64 => Self::Primitive(PrimitiveID::U64),
-            tokenizer::TypeID::F32 => Self::Primitive(PrimitiveID::F32),
-            tokenizer::TypeID::F64 => Self::Primitive(PrimitiveID::F64),
+            tokenizer::TypeID::I8 => PrimitiveID::I8.into(),
+            tokenizer::TypeID::I16 => PrimitiveID::I16.into(),
+            tokenizer::TypeID::I32 => PrimitiveID::I32.into(),
+            tokenizer::TypeID::I64 => PrimitiveID::I64.into(),
+            tokenizer::TypeID::U8 => PrimitiveID::U8.into(),
+            tokenizer::TypeID::U16 => PrimitiveID::U16.into(),
+            tokenizer::TypeID::U32 => PrimitiveID::U32.into(),
+            tokenizer::TypeID::U64 => PrimitiveID::U64.into(),
+            tokenizer::TypeID::F32 => PrimitiveID::F32.into(),
+            tokenizer::TypeID::F64 => PrimitiveID::F64.into(),
             tokenizer::TypeID::String | tokenizer::TypeID::QuotedString => {
-                Self::Primitive(PrimitiveID::String)
+                PrimitiveID::String.into()
             }
-            tokenizer::TypeID::Bool => Self::Primitive(PrimitiveID::Bool),
+            tokenizer::TypeID::Bool => PrimitiveID::Bool.into(),
         }
     }
 }
@@ -444,9 +523,7 @@ impl<'a> Primitive<'a> {
                     _ => return Err(ParseError::IncorrectType),
                 })))
             }
-            (Primitive::Number(number), PrimitiveID::String) => {
-                return Err(ParseError::IncorrectType);
-            }
+            (Primitive::Number(number), PrimitiveID::String) => Err(ParseError::IncorrectType),
             (
                 Primitive::String(_),
                 PrimitiveID::I8
@@ -460,13 +537,13 @@ impl<'a> Primitive<'a> {
                 | PrimitiveID::F32
                 | PrimitiveID::F64,
             )
-            | (Primitive::Bool(_), _) => return Err(ParseError::IncorrectType),
+            | (Primitive::Bool(_), _) => Err(ParseError::IncorrectType),
             (Primitive::String(s), PrimitiveID::String) => Ok(Primitive::String(s)),
             (Primitive::Number(_) | Primitive::String(_), PrimitiveID::Bool) => {
-                return Err(ParseError::IncorrectType);
+                Err(ParseError::IncorrectType)
             }
-            (Primitive::Bool(b), PrimitiveID::Bool) => return Ok(Primitive::Bool(*b)),
-            (Primitive::Bool(_), _) => return Err(ParseError::IncorrectType),
+            (Primitive::Bool(b), PrimitiveID::Bool) => Ok(Primitive::Bool(*b)),
+            (Primitive::Bool(_), _) => Err(ParseError::IncorrectType),
         }
     }
 }
@@ -518,12 +595,6 @@ impl Display for PrimitiveID {
     }
 }
 
-impl From<PrimitiveID> for TypeID {
-    fn from(value: PrimitiveID) -> Self {
-        Self::Primitive(value)
-    }
-}
-
 impl PrimitiveID {
     pub fn can_fit(self, other: Self) -> bool {
         debug!(?self, ?other);
@@ -570,14 +641,18 @@ impl PrimitiveID {
 
 #[derive(Debug, PartialEq, PartialOrd, Eq, Clone)]
 pub struct Array<'a> {
-    pub(crate) type_id: TypeID,
+    pub(crate) type_id: TypeId,
     pub(crate) values: Vec<Value<'a>>,
 }
 
 impl<'a> Array<'a> {
-    pub fn new(type_id: TypeID) -> Self {
+    pub fn new(type_id: TypeId) -> Self {
+        let id = TypeId {
+            id: type_id.id,
+            array: true,
+        };
         Self {
-            type_id,
+            type_id: id,
             values: vec![],
         }
     }
@@ -585,7 +660,7 @@ impl<'a> Array<'a> {
     pub fn push(&mut self, value: Value<'a>) {
         match &value {
             Value::Primitive(primitive) => {
-                assert!(self.type_id == TypeID::Primitive(primitive.id()));
+                assert!(self.type_id == primitive.id().into());
             }
             Value::Complex(_complex_value) => {
                 panic!()
@@ -663,7 +738,7 @@ impl<'a> ComplexTypeName<'a> {
 pub struct StructDecl<'a> {
     pub(crate) visibility: Visibility,
 
-    pub(crate) fields: HashMap<&'a str, TypeID>,
+    pub(crate) fields: HashMap<&'a str, TypeId>,
 }
 
 #[derive(Debug)]
@@ -732,7 +807,7 @@ pub struct EnumDecl<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variable<'a> {
-    pub(crate) typeid: TypeID,
+    pub(crate) typeid: TypeId,
     pub(crate) mutable: bool,
     pub(crate) val: VariableValue<'a>,
 }
@@ -744,7 +819,7 @@ impl Display for Variable<'_> {
 }
 
 impl<'a> Variable<'a> {
-    pub fn new(typeid: TypeID, mutable: bool, val: VariableValue<'a>) -> Self {
+    pub fn new(typeid: TypeId, mutable: bool, val: VariableValue<'a>) -> Self {
         Self {
             typeid,
             mutable,
@@ -754,8 +829,8 @@ impl<'a> Variable<'a> {
 
     pub fn from_value(value: Value<'a>, mutable: bool, typer: Option<&Typer<'a>>) -> Self {
         let typeid = match &value {
-            Value::Primitive(primitive) => TypeID::Primitive(primitive.id()),
-            Value::Complex(complex_value) => TypeID::Complex(match complex_value {
+            Value::Primitive(primitive) => TypeId::from(primitive.id()),
+            Value::Complex(complex_value) => TypeId::from(match complex_value {
                 ComplexValue::Struct(decl) => typer.unwrap().id(decl.name.name()).unwrap(),
                 ComplexValue::Enum(enu) => enu.id,
             }),
@@ -772,7 +847,7 @@ impl<'a> Variable<'a> {
 
 #[derive(Debug)]
 pub struct VariableType {
-    typ: TypeID,
+    typ: TypeId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -885,8 +960,8 @@ pub enum BlockValue<'a> {
 pub struct FunctionDecl<'a> {
     pub(crate) visibility: Visibility,
     pub(crate) name: &'a str,
-    pub(crate) args: Option<Vec<(bool, &'a str, TypeID)>>,
-    pub(crate) return_type: Option<TypeID>,
+    pub(crate) args: Option<Vec<(bool, &'a str, TypeId)>>,
+    pub(crate) return_type: Option<TypeId>,
 
     pub(crate) block: Vec<(usize, BlockValue<'a>)>,
 }
@@ -896,7 +971,7 @@ impl<'a> FunctionDecl<'a> {
         self.name
     }
 
-    pub fn args(&self) -> Option<&[(bool, &'a str, TypeID)]> {
+    pub fn args(&self) -> Option<&[(bool, &'a str, TypeId)]> {
         self.args.as_deref()
     }
 
@@ -909,7 +984,7 @@ impl<'a> FunctionDecl<'a> {
 pub struct FunctionCall<'a> {
     pub(crate) name: &'a str,
     pub(crate) args: Vec<Value<'a>>,
-    pub(crate) return_type: Option<TypeID>,
+    pub(crate) return_type: Option<TypeId>,
 }
 
 impl Display for FunctionCall<'_> {
@@ -960,7 +1035,7 @@ impl<'a> ComplexValue<'a> {
                     .fields
                     .iter()
                     .map(|f| (f.1, f.2.id(None).unwrap()))
-                    .collect::<HashMap<&'a str, TypeID>>();
+                    .collect::<HashMap<&'a str, TypeId>>();
                 ComplexTypeDecl::StructDecl(StructDecl {
                     visibility: Visibility::Private,
                     fields: decl,
@@ -1047,16 +1122,16 @@ impl Display for Value<'_> {
 }
 
 impl Value<'_> {
-    pub fn id(&self, typer: Option<&Typer>) -> Option<TypeID> {
+    pub fn id(&self, typer: Option<&Typer>) -> Option<TypeId> {
         match self {
-            Value::Primitive(prim) => Some(TypeID::Primitive(prim.id())),
+            Value::Primitive(prim) => Some(TypeId::from(prim.id())),
             Value::Complex(v) => {
                 let typer = typer?;
 
                 match v {
-                    ComplexValue::Struct(struc) => typer.id(struc.name.name()).map(TypeID::Complex),
+                    ComplexValue::Struct(struc) => typer.id(struc.name.name()).map(TypeId::from),
 
-                    ComplexValue::Enum(enu) => Some(TypeID::Complex(enu.id)),
+                    ComplexValue::Enum(enu) => Some(TypeId::from(enu.id)),
                 }
             }
             Value::Array(array) => Some(array.type_id),

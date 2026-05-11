@@ -6,16 +6,16 @@
 
 use std::{
     collections::HashSet,
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Formatter},
 };
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::types::{
     Array, Block, BlockValue, ComplexType, ComplexTypeDecl, ComplexTypeID, ComplexTypeName,
     ComplexValue, Condition, ConditionItem, ElseIfStatement, Enum, EnumDecl, Frame, FunctionCall,
     FunctionDecl, IfStatement, MathExpr, MathItem, Number, Operation, Primitive, PrimitiveID,
-    Struct, StructAccess, StructDecl, TypeDecl, TypeDeclReturn, TypeID, Typer, Value, Variable,
+    Struct, StructAccess, StructDecl, TypeDecl, TypeDeclReturn, TypeId, Typer, Value, Variable,
     VariableUse, VariableValue, VariableValueReturn, Visibility,
 };
 use tokenizer::{Span, Token, Tokenizer};
@@ -108,21 +108,35 @@ impl<'a> Parser<'a> {
             }
             let token = &iter[idx];
             match token.1 {
-                Token::Str(_) => {
+                Token::Str(s) => {
                     if let Some((_span, peek)) = iter.get(idx + 1)
                         && peek == &Token::LeftParen
                     {
-                        let (call, i) =
-                            FunctionCall::parse_ctx(&ast, &iter[idx.saturating_sub(1)..])?;
-                        ast.push(AstNode::FunctionCall(call));
-                        idx += i;
+                        let fn_decl = ast.nodes().iter().rfind(|n| match n {
+                            AstNode::Function(function_decl) => function_decl.name == s,
+                            _ => false,
+                        });
+                        match fn_decl.unwrap() {
+                            AstNode::Function(function_decl) => {
+                                let (call, i) = FunctionCall::parse_ctx(
+                                    (function_decl, None, &typer),
+                                    &iter[idx.saturating_sub(1)..],
+                                )?;
+                                ast.push(AstNode::FunctionCall(call));
+                                idx += i;
+                            }
+                            _ => panic!(""),
+                        }
                     }
                 }
                 Token::TypeID(_type_id) => {
                     // debug!(?type_id);
                 }
                 Token::Pub | Token::Function | Token::Struct | Token::Enum => {
-                    let (name, decl, i) = TypeDecl::parse_ctx_mut(&mut typer, &iter[idx..])?;
+                    let (name, decl, i) = TypeDecl::parse_ctx_mut(
+                        (&ast, &[(0, BlockValue::Block)], &mut typer),
+                        &iter[idx..],
+                    )?;
                     idx += i;
                     needs_inc = false;
                     match decl {
@@ -177,54 +191,56 @@ impl<'a> Primitive<'a> {
 
     // #[instrument(name = "Primitive::parse_ctx", skip_all, err)]
     pub fn parse_ctx(
-        ctx: &Option<TypeID>,
+        ctx: &Option<TypeId>,
         tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(Self, usize)> {
         match ctx {
             None => Self::parse(tokens),
-            Some(id) => {
-                match (tokens[0].1, id) {
-                    (Token::Number(num), TypeID::Primitive(primitive_id)) => {
-                        return Ok((
-                            Primitive::Number(match primitive_id {
-                                PrimitiveID::I8 => Number::I8(num.parse::<i8>().unwrap()),
-                                PrimitiveID::I16 => Number::I16(num.parse::<i16>().unwrap()),
-                                PrimitiveID::I32 => Number::I32(num.parse::<i32>().unwrap()),
-                                PrimitiveID::I64 => Number::I64(num.parse::<i64>().unwrap()),
-                                PrimitiveID::U8 => Number::U8(num.parse::<u8>().unwrap()),
-                                PrimitiveID::U16 => Number::U16(num.parse::<u16>().unwrap()),
-                                PrimitiveID::U32 => Number::U32(num.parse::<u32>().unwrap()),
-                                PrimitiveID::U64 => Number::U64(num.parse::<u64>().unwrap()),
-                                PrimitiveID::F32 => Number::F32(num.parse::<f32>().unwrap()),
-                                PrimitiveID::F64 => Number::F64(num.parse::<f64>().unwrap()),
-                                PrimitiveID::String | PrimitiveID::Bool => {
-                                    return Err(ParseError::IncorrectType);
-                                }
-                            }),
-                            1,
-                        ));
-                    }
-                    (Token::Str(s) | Token::QuotedString(s), TypeID::Primitive(primitive_id)) => {
-                        if primitive_id == &PrimitiveID::String {
-                            return Ok((Primitive::String(s), 1));
+            Some(id) => match (tokens[0].1, id) {
+                (Token::Number(num), id) => Ok((
+                    Primitive::Number(match id.as_primitive() {
+                        PrimitiveID::I8 => Number::I8(num.parse::<i8>().unwrap()),
+                        PrimitiveID::I16 => Number::I16(num.parse::<i16>().unwrap()),
+                        PrimitiveID::I32 => Number::I32(num.parse::<i32>().unwrap()),
+                        PrimitiveID::I64 => Number::I64(num.parse::<i64>().unwrap()),
+                        PrimitiveID::U8 => Number::U8(num.parse::<u8>().unwrap()),
+                        PrimitiveID::U16 => Number::U16(num.parse::<u16>().unwrap()),
+                        PrimitiveID::U32 => Number::U32(num.parse::<u32>().unwrap()),
+                        PrimitiveID::U64 => Number::U64(num.parse::<u64>().unwrap()),
+                        PrimitiveID::F32 => Number::F32(num.parse::<f32>().unwrap()),
+                        PrimitiveID::F64 => Number::F64(num.parse::<f64>().unwrap()),
+                        PrimitiveID::String | PrimitiveID::Bool => {
+                            return Err(ParseError::IncorrectType);
                         }
-                        return Err(ParseError::IncorrectType);
+                    }),
+                    1,
+                )),
+                (Token::Str(s) | Token::QuotedString(s), id) => {
+                    if id.as_primitive() == PrimitiveID::String {
+                        return Ok((Primitive::String(s), 1));
                     }
-                    (Token::True, TypeID::Primitive(PrimitiveID::Bool)) => {
+                    Err(ParseError::IncorrectType)
+                }
+                (Token::True, id) => {
+                    if id.as_primitive() == PrimitiveID::String {
                         return Ok((Primitive::Bool(true), 1));
                     }
-                    (Token::False, TypeID::Primitive(PrimitiveID::Bool)) => {
+                    Err(ParseError::IncorrectType)
+                }
+                (Token::False, id) => {
+                    if id.as_primitive() == PrimitiveID::String {
                         return Ok((Primitive::Bool(false), 1));
                     }
-                    t => panic!("{t:?}"),
-                };
-            }
+                    Err(ParseError::IncorrectType)
+                }
+                t => panic!("{t:?}"),
+            },
         }
     }
 }
 
 impl Enum {
-    // #[instrument(name = "Enum::parse_ctx", skip_all, err)]
+    #[instrument(name = "Enum::parse_ctx", skip_all, err)]
     pub fn parse_ctx<'a>(
         ctx: &Typer<'a>,
         tokens: &[(Span, Token<'a>)],
@@ -293,7 +309,7 @@ impl Enum {
 }
 
 impl<'a> StructDecl<'a> {
-    // #[instrument(name = "StructDecl::parse_ctx_mut", skip_all, err)]
+    #[instrument(name = "StructDecl::parse_ctx_mut", skip_all, ret)]
     pub fn parse_ctx_mut(
         ctx: &mut Typer<'a>,
         tokens: &[(Span, Token<'a>)],
@@ -353,7 +369,7 @@ impl<'a> StructDecl<'a> {
                     Token::TypeID(s) => {
                         assert!(
                             decl.fields
-                                .insert(ident.unwrap(), TypeID::from(*s))
+                                .insert(ident.unwrap(), TypeId::from(*s))
                                 .is_none()
                         );
                         state = State::Type;
@@ -362,21 +378,19 @@ impl<'a> StructDecl<'a> {
                         match *s {
                             "string" => assert!(
                                 decl.fields
-                                    .insert(ident.unwrap(), TypeID::Primitive(PrimitiveID::String))
+                                    .insert(ident.unwrap(), PrimitiveID::String.into())
                                     .is_none()
                             ),
                             "u32" => assert!(
                                 decl.fields
-                                    .insert(ident.unwrap(), TypeID::Primitive(PrimitiveID::U32))
+                                    .insert(ident.unwrap(), PrimitiveID::U32.into())
                                     .is_none()
                             ),
                             _ => {
                                 match ctx.id(s) {
                                     Some(id) => {
                                         assert!(
-                                            decl.fields
-                                                .insert(ident.unwrap(), TypeID::Complex(id))
-                                                .is_none()
+                                            decl.fields.insert(ident.unwrap(), id.into()).is_none()
                                         );
                                     }
                                     None => {
@@ -400,11 +414,11 @@ impl<'a> StructDecl<'a> {
                                 match decl.fields.get(field.0) {
                                     Some(f) => {
                                         if *f != *field.1 {
-                                            match (*f, *field.1) {
-                                                (TypeID::Primitive(n), TypeID::Primitive(nn)) => {
-                                                    assert!(nn.can_fit(n));
-                                                }
-                                                _ => panic!(),
+                                            let (n, nn) = (*f, *field.1);
+                                            {
+                                                assert!(
+                                                    nn.as_primitive().can_fit(n.as_primitive())
+                                                );
                                             }
                                         }
                                         matching += 1;
@@ -430,7 +444,7 @@ impl<'a> StructDecl<'a> {
 }
 
 impl<'a> Struct<'a> {
-    // #[instrument(name = "Struct::parse_ctx", skip_all, err)]
+    #[instrument(name = "Struct::parse_ctx", skip_all, err)]
     pub fn parse_ctx(ctx: &Typer, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
@@ -537,7 +551,7 @@ impl<'a> Struct<'a> {
 }
 
 impl<'a> EnumDecl<'a> {
-    // #[instrument(name = "EnumDecl::parse", skip_all, err)]
+    #[instrument(name = "EnumDecl::parse", skip_all, err)]
     pub fn parse(tokens: &[(Span, Token<'a>)]) -> ParseResult<(&'a str, Self, usize)> {
         #[derive(Debug)]
         enum State {
@@ -615,7 +629,7 @@ impl<'a> EnumDecl<'a> {
     }
 }
 
-// #[instrument(name = "parse_condition", skip(_ctx, tokens), ret)]
+#[instrument(name = "parse_condition", skip(_ctx, tokens), ret)]
 fn parse_condition<'a>(
     _ctx: &Typer<'a>,
     tokens: &[(Span, Token<'a>)],
@@ -676,9 +690,9 @@ fn parse_condition<'a>(
 }
 
 impl<'a> Block<'a> {
-    // #[instrument(name = "Block::parse_ctx", skip(ctx, tokens))]
+    #[instrument(name = "Block::parse_ctx", skip(ctx, tokens))]
     fn parse_ctx(
-        ctx: &Typer<'a>,
+        ctx: &(&Ast<'a>, &[(usize, BlockValue<'a>)], &Typer<'a>),
         tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(Vec<(usize, BlockValue<'a>)>, usize)> {
         enum State {
@@ -693,14 +707,14 @@ impl<'a> Block<'a> {
         let mut level = 0;
 
         while let Some((_, token)) = tokens.get(i) {
-            debug!(?token);
+            // warn!(?token);
             match state {
                 State::Block => match token {
                     Token::Return => state = State::Return,
                     Token::Else => {
                         level += 1;
                         if let Some((_, Token::If)) = tokens.get(i + 1) {
-                            let (cond, inc) = parse_condition(ctx, &tokens[i + 2..])?;
+                            let (cond, inc) = parse_condition(ctx.2, &tokens[i + 2..])?;
                             block.push((level, BlockValue::ElseIf(ElseIfStatement { cond })));
                             i += inc + 3;
                         } else {
@@ -709,7 +723,7 @@ impl<'a> Block<'a> {
                         }
                     }
                     Token::If => {
-                        let (cond, inc) = parse_condition(ctx, &tokens[i + 1..])?;
+                        let (cond, inc) = parse_condition(ctx.2, &tokens[i + 1..])?;
                         i += inc + 1;
 
                         level += 1;
@@ -760,7 +774,7 @@ impl<'a> Block<'a> {
                                                         let variable = BlockValue::VariableDecl((
                                                             var_name,
                                                             Variable::new(
-                                                                v.id(Some(ctx)).unwrap(),
+                                                                v.id(Some(ctx.2)).unwrap(),
                                                                 mutable,
                                                                 VariableValue::Value(v.clone()),
                                                             ),
@@ -789,7 +803,7 @@ impl<'a> Block<'a> {
                                                                     BlockValue::VariableDecl((
                                                                         var_name,
                                                                         Variable::new(
-                                                                            v.id(Some(ctx))
+                                                                            v.id(Some(ctx.2))
                                                                                 .unwrap(),
                                                                             mutable,
                                                                             VariableValue::Value(
@@ -814,7 +828,7 @@ impl<'a> Block<'a> {
                             VariableValue::Value(_val) => {
                                 b_val = Some(BlockValue::VariableDecl((
                                     var_name,
-                                    Variable::new(_val.id(Some(ctx)).unwrap(), mutable, value),
+                                    Variable::new(_val.id(Some(ctx.2)).unwrap(), mutable, value),
                                 )));
                             }
                             VariableValue::Name(name) => {
@@ -859,10 +873,21 @@ impl<'a> Block<'a> {
                         if let Some((_, next)) = tokens.get(i + 1)
                             && *next == Token::LeftParen
                         {
-                            let (call, inc) =
-                                FunctionCall::parse_ctx(&Ast::default(), &tokens[i..])?;
-                            block.push((level, BlockValue::FunctionCall(call)));
-                            i += inc;
+                            let fn_decl = ctx.0.nodes().iter().rfind(|n| match n {
+                                AstNode::Function(function_decl) => function_decl.name == *s,
+                                _ => false,
+                            });
+                            match fn_decl.unwrap() {
+                                AstNode::Function(function_decl) => {
+                                    let (call, inc) = FunctionCall::parse_ctx(
+                                        (function_decl, Some(ctx.1), ctx.2),
+                                        &tokens[i.saturating_sub(1)..],
+                                    )?;
+                                    block.push((level, BlockValue::FunctionCall(call)));
+                                    i += inc;
+                                }
+                                _ => panic!(""),
+                            }
                             assert_eq!(tokens[i].1, Token::Semicolon);
                             i += 1;
                             continue;
@@ -874,28 +899,7 @@ impl<'a> Block<'a> {
                         for b in block.iter_mut().rev() {
                             match &mut b.1 {
                                 BlockValue::Else => {}
-                                BlockValue::Block => panic!(), // {
-                                //     for values in block_values.iter() {
-                                //         match values {
-                                //             BlockValue::VariableDecl(_decl) => {
-                                //                 reass = match var_name {
-                                //                     VariableValueReturn::Assignment(
-                                //                         ref variable_value,
-                                //                     )
-                                //                     | VariableValueReturn::ReAssignment(
-                                //                         ref variable_value,
-                                //                     ) => Some(variable_value.clone()),
-                                //                     VariableValueReturn::Expr(ref math_items) => {
-                                //                         Some(VariableValue::Expr(
-                                //                             math_items.clone(),
-                                //                         ))
-                                //                     }
-                                //                 };
-                                //             }
-                                //             t => panic!("{t:?}"),
-                                //         }
-                                //     }
-                                // }
+                                BlockValue::Block => panic!(),
                                 BlockValue::VariableDecl(_decl) => match &var_name {
                                     VariableValueReturn::Assignment(variable_value) => {
                                         reass = Some(variable_value.clone());
@@ -944,18 +948,288 @@ impl<'a> Block<'a> {
                                 0,
                                 BlockValue::Return(VariableValue::Value(Value::Primitive(prim))),
                             ));
-                            // let prim_id = prim.id();
-                            // match (decl.return_type, prim_id) {
-                            //     (Some(val_id), prim_id) => match val_id {
-                            //         TypeID::Primitive(primitive_id) => {
-                            //             if !primitive_id.can_fit(prim_id) {
-                            //                 panic!("{val_id:?} {prim_id:?}");
-                            //             }
-                            //         }
-                            //         TypeID::Complex(_complex_type_id) => todo!(),
-                            //     },
-                            //     t => panic!("{t:?}"),
-                            // }
+                        }
+
+                        Token::Semicolon => {
+                            state = State::Block;
+                        }
+                        Token::RightAngleBracket => {
+                            level = level.strict_sub(1);
+                            block.push((level, BlockValue::Return(VariableValue::Empty)));
+                            state = State::Block;
+                        }
+                        t => panic!("{t:?} {:?}", &tokens[i..]),
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        Ok((block, i))
+    }
+
+    #[instrument(name = "Block::parse_ctx_mut", skip(ctx, tokens))]
+    fn parse_ctx_mut(
+        ctx: (&Ast<'a>, &[(usize, BlockValue<'a>)], &mut Typer<'a>),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Vec<(usize, BlockValue<'a>)>, usize)> {
+        enum State {
+            Block,
+            Return,
+        }
+
+        let mut state = State::Block;
+        let mut block: Vec<(usize, BlockValue)> = vec![];
+        let mut i = 0;
+
+        let mut level = 0;
+
+        while let Some((_, token)) = tokens.get(i) {
+            debug!(?token);
+            match state {
+                State::Block => match token {
+                    Token::Return => state = State::Return,
+                    Token::Else => {
+                        level += 1;
+                        if let Some((_, Token::If)) = tokens.get(i + 1) {
+                            let (cond, inc) = parse_condition(ctx.2, &tokens[i + 2..])?;
+                            block.push((level, BlockValue::ElseIf(ElseIfStatement { cond })));
+                            i += inc + 3;
+                        } else {
+                            block.push((level, BlockValue::Else));
+                            i += 1;
+                        }
+                    }
+                    Token::If => {
+                        let (cond, inc) = parse_condition(ctx.2, &tokens[i + 1..])?;
+                        i += inc + 1;
+
+                        level += 1;
+                        block.push((level, BlockValue::IfStatement(IfStatement { cond })));
+                    }
+                    Token::LeftAngleBracket => {
+                        // level += 1;
+                        // block.push((level, BlockValue::Block));
+                    }
+                    Token::RightAngleBracket => {
+                        debug!("found closing bracket {level}");
+                        match level {
+                            0 => return Ok((block, i)),
+                            _ => level = level.saturating_sub(1),
+                        }
+                    }
+                    Token::Let => {
+                        let (var_name, mutable, id, value, inc) =
+                            Variable::parse_ctx_mut(&(ctx.0, &block, ctx.2), &tokens[i..])?;
+
+                        i += inc;
+                        debug!(?var_name, ?mutable, ?id, ?value);
+
+                        let mut b_val: Option<BlockValue> = None;
+                        match &value {
+                            VariableValue::StructAccess(struct_access) => {
+                                let access_len = struct_access.fields().len();
+                                match &block
+                                    .iter()
+                                    .rfind(|(_level, val)| match val {
+                                        BlockValue::VariableDecl(decl) => {
+                                            debug!(?struct_access, ?decl);
+                                            struct_access.name() == decl.0
+                                        }
+                                        _ => false,
+                                    })
+                                    .unwrap()
+                                    .1
+                                {
+                                    BlockValue::VariableDecl(decl) => match &decl.1.val {
+                                        VariableValue::Value(Value::Complex(
+                                            ComplexValue::Struct(struc),
+                                        )) => {
+                                            debug!(?struc);
+                                            if access_len == 1 {
+                                                for (_level, name, v) in &struc.fields {
+                                                    if struct_access.fields()[0] == *name {
+                                                        let variable = BlockValue::VariableDecl((
+                                                            var_name,
+                                                            Variable::new(
+                                                                v.id(Some(ctx.2)).unwrap(),
+                                                                mutable,
+                                                                VariableValue::Value(v.clone()),
+                                                            ),
+                                                        ));
+                                                        b_val = Some(variable);
+                                                    }
+                                                }
+                                            } else {
+                                                for (i, (_level, _name, upper_v)) in
+                                                    struc.fields.iter().enumerate()
+                                                {
+                                                    if let Value::Complex(ComplexValue::Struct(
+                                                        strukt,
+                                                    )) = upper_v
+                                                    {
+                                                        for (_lvl, name, v) in &strukt.fields {
+                                                            if struct_access.fields()[i + 1]
+                                                                == *name
+                                                                && i + 1
+                                                                    >= struct_access
+                                                                        .fields()
+                                                                        .len()
+                                                                        .strict_sub(1)
+                                                            {
+                                                                let variable =
+                                                                    BlockValue::VariableDecl((
+                                                                        var_name,
+                                                                        Variable::new(
+                                                                            v.id(Some(ctx.2))
+                                                                                .unwrap(),
+                                                                            mutable,
+                                                                            VariableValue::Value(
+                                                                                v.clone(),
+                                                                            ),
+                                                                        ),
+                                                                    ));
+                                                                b_val = Some(variable);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            assert!(b_val.is_some());
+                                        }
+                                        t => panic!("{t:?}"),
+                                    },
+                                    t => panic!("{t:?}"),
+                                }
+                            }
+
+                            VariableValue::Value(_val) => {
+                                b_val = Some(BlockValue::VariableDecl((
+                                    var_name,
+                                    Variable::new(_val.id(Some(ctx.2)).unwrap(), mutable, value),
+                                )));
+                            }
+                            VariableValue::Name(name) => {
+                                let f = block.iter().rfind(|(_level, val)| match val {
+                                    BlockValue::VariableDecl(decl) => {
+                                        debug!(?name, ?decl);
+                                        *name == decl.0
+                                    }
+                                    _ => false,
+                                });
+                                if let Some((_, v)) = f {
+                                    match v {
+                                        BlockValue::VariableDecl(decl) => {
+                                            b_val = Some(BlockValue::VariableDecl((
+                                                var_name,
+                                                decl.1.clone(),
+                                            )));
+                                        }
+                                        t => panic!("{t:?}"),
+                                    }
+                                }
+                            }
+                            VariableValue::Expr(_math_items) => {
+                                b_val = Some(BlockValue::VariableDecl((
+                                    var_name,
+                                    Variable::new(id.unwrap(), mutable, value),
+                                )));
+                            }
+                            VariableValue::FunctionCall(function_call) => {
+                                b_val = Some(BlockValue::VariableDecl((
+                                    var_name,
+                                    Variable::new(
+                                        function_call.return_type.unwrap(),
+                                        mutable,
+                                        value,
+                                    ),
+                                )));
+                            }
+                            VariableValue::Empty => panic!(),
+                        }
+
+                        block.push((level, b_val.unwrap()));
+                    }
+
+                    Token::Str(s) => {
+                        if let Some((_, next)) = tokens.get(i + 1)
+                            && *next == Token::LeftParen
+                        {
+                            let fn_decl = ctx.0.nodes().iter().rfind(|n| match n {
+                                AstNode::Function(function_decl) => function_decl.name == *s,
+                                _ => false,
+                            });
+                            match fn_decl.unwrap() {
+                                AstNode::Function(function_decl) => {
+                                    let (call, inc) = FunctionCall::parse_ctx(
+                                        (function_decl, Some(ctx.1), ctx.2),
+                                        &tokens[i.saturating_sub(1)..],
+                                    )?;
+                                    block.push((level, BlockValue::FunctionCall(call)));
+                                    i += inc;
+                                }
+                                _ => panic!(""),
+                            }
+                            assert_eq!(tokens[i].1, Token::Semicolon);
+                            i += 1;
+                            continue;
+                        }
+                        let (var_name, inc) = VariableUse::parse_ctx_mut(&ctx, &tokens[i..])?;
+                        i += inc;
+
+                        let mut reass = None;
+                        for b in block.iter_mut().rev() {
+                            match &mut b.1 {
+                                BlockValue::Else => {}
+                                BlockValue::Block => panic!(),
+                                BlockValue::VariableDecl(_decl) => match &var_name {
+                                    VariableValueReturn::Assignment(variable_value) => {
+                                        reass = Some(variable_value.clone());
+                                    }
+                                    VariableValueReturn::ReAssignment(_variable_value) => todo!(),
+                                    VariableValueReturn::Expr(_math_items) => todo!(),
+                                },
+                                t => panic!("{t:?}"),
+                            }
+                        }
+                        if level == 0 {
+                            block.push((
+                                level,
+                                BlockValue::VariableReAssignment((s, reass.unwrap())),
+                            ));
+                        } else {
+                            match block.last_mut() {
+                                None => block.push((
+                                    level,
+                                    BlockValue::VariableReAssignment((s, reass.unwrap())),
+                                )),
+                                Some(b) => match &mut b.1 {
+                                    BlockValue::Block | BlockValue::VariableDecl(_) => {
+                                        block.push((
+                                            level,
+                                            BlockValue::VariableReAssignment((s, reass.unwrap())),
+                                        ));
+                                    }
+                                    t => panic!("{t:?}"),
+                                },
+                            }
+                        }
+                    }
+                    _t => {} //panic!("{:?}", &tokens[i..]),
+                },
+                State::Return => {
+                    match token {
+                        Token::Str(s) => {
+                            // handle returning a struct being made as the return value? ie
+                            // return Foo { ... };
+                            block.push((0, BlockValue::Return(VariableValue::Name(s))));
+                        }
+                        Token::Number(_n) | Token::QuotedString(_n) => {
+                            let (prim, _i) = Primitive::parse(&tokens[i..])?;
+                            block.push((
+                                0,
+                                BlockValue::Return(VariableValue::Value(Value::Primitive(prim))),
+                            ));
                         }
 
                         Token::Semicolon => {
@@ -978,8 +1252,11 @@ impl<'a> Block<'a> {
 }
 
 impl<'a> FunctionDecl<'a> {
-    // #[instrument(name = "FunctionDecl::parse_ctx", skip_all, err)]
-    fn parse_ctx(ctx: &Typer<'a>, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
+    #[instrument(name = "FunctionDecl::parse_ctx", skip_all, err)]
+    fn parse_ctx(
+        ctx: (&Ast<'a>, &[(usize, BlockValue<'a>)], &Typer<'a>),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
             Fn,
@@ -1033,24 +1310,203 @@ impl<'a> FunctionDecl<'a> {
                     Token::TypeID(t) => {
                         match &mut decl.args {
                             Some(args) => {
-                                args.push((mutable, found_arg.unwrap(), TypeID::from(*t)));
+                                args.push((mutable, found_arg.unwrap(), TypeId::from(*t)));
                             }
                             None => {
                                 decl.args =
-                                    Some(vec![(mutable, found_arg.unwrap(), TypeID::from(*t))]);
+                                    Some(vec![(mutable, found_arg.unwrap(), TypeId::from(*t))]);
                             }
                         }
                         found_arg = None;
                         mutable = false;
+                    }
+                    Token::LeftBracket => {
+                        i += 1;
+                        let mut id = None;
+                        if let Some((_span, token)) = tokens.get(i) {
+                            id = Some(match token {
+                                Token::TypeID(t) => TypeId::from(*t),
+                                Token::Str(s) => TypeId::from(ctx.2.id(s).unwrap()),
+                                t => panic!("{t:?}"),
+                            });
+                        }
+                        i += 1;
+                        if let Some((_span, token)) = tokens.get(i)
+                            && token == &Token::RightBracket
+                        {
+                            match &mut decl.args {
+                                Some(args) => {
+                                    args.push((
+                                        mutable,
+                                        found_arg.unwrap(),
+                                        TypeId {
+                                            id: id.unwrap().id,
+                                            array: true,
+                                        },
+                                    ));
+                                }
+                                None => {
+                                    decl.args = Some(vec![(
+                                        mutable,
+                                        found_arg.unwrap(),
+                                        TypeId {
+                                            id: id.unwrap().id,
+                                            array: true,
+                                        },
+                                    )]);
+                                }
+                            }
+                        }
                     }
                     Token::RightParen => state = State::ReturnType,
                     Token::Comma => state = State::Arg,
                     t => panic!("{t:?}"),
                 },
                 State::ReturnType => match token {
-                    Token::TypeID(t) => decl.return_type = Some(TypeID::from(*t)),
+                    Token::TypeID(t) => decl.return_type = Some(TypeId::from(*t)),
                     Token::LeftAngleBracket => {
-                        let (block, inc) = Block::parse_ctx(ctx, &tokens[i..])?;
+                        let (block, inc) = Block::parse_ctx(&ctx, &tokens[i..])?;
+                        decl.block = block;
+                        return Ok((decl, i + inc));
+                    }
+                    t => panic!("{t:?}"),
+                },
+            }
+
+            i += 1;
+        }
+
+        panic!()
+    }
+
+    #[instrument(name = "FunctionDecl::parse_ctx_mut", skip_all, ret)]
+    fn parse_ctx_mut(
+        ctx: (&Ast<'a>, &[(usize, BlockValue<'a>)], &mut Typer<'a>),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Self, usize)> {
+        #[derive(Debug)]
+        enum State {
+            Fn,
+            Name,
+            Arg,
+            TypeID,
+            ReturnType,
+        }
+
+        let mut state = State::Fn;
+        let mut decl = FunctionDecl::default();
+
+        let mut found_arg = None;
+        let mut mutable = false;
+
+        let mut i = 0;
+
+        while let Some((_span, token)) = tokens.get(i) {
+            match state {
+                State::Fn => match token {
+                    Token::Pub => decl.visibility = Visibility::Pub,
+                    Token::Function => {
+                        state = State::Name;
+                    }
+                    t => panic!("{t:?}"),
+                },
+                State::Name => match token {
+                    Token::Str(s) => {
+                        assert!(decl.name.is_empty());
+                        decl.name = s;
+                    }
+                    Token::LeftParen => state = State::Arg,
+                    t => panic!("{t:?}"),
+                },
+                State::Arg => match token {
+                    Token::Mutable => {
+                        assert!(!mutable);
+                        mutable = true;
+                    }
+                    Token::Str(s) => {
+                        assert!(found_arg.is_none());
+                        found_arg = Some(s);
+                    }
+                    Token::Colon => state = State::TypeID,
+                    Token::RightParen => {
+                        state = State::ReturnType;
+                    }
+                    t => panic!("{t:?}"),
+                },
+                State::TypeID => match token {
+                    Token::TypeID(t) => {
+                        match &mut decl.args {
+                            Some(args) => {
+                                args.push((mutable, found_arg.unwrap(), TypeId::from(*t)));
+                            }
+                            None => {
+                                decl.args =
+                                    Some(vec![(mutable, found_arg.unwrap(), TypeId::from(*t))]);
+                            }
+                        }
+                        found_arg = None;
+                        mutable = false;
+                    }
+                    Token::Str(s) => {
+                        let id = ctx.2.id(s).unwrap();
+                        match &mut decl.args {
+                            Some(args) => {
+                                args.push((mutable, found_arg.unwrap(), TypeId::from(id)));
+                            }
+                            None => {
+                                decl.args =
+                                    Some(vec![(mutable, found_arg.unwrap(), TypeId::from(id))]);
+                            }
+                        }
+                        found_arg = None;
+                        mutable = false;
+                    }
+                    Token::LeftBracket => {
+                        i += 1;
+                        let mut id = None;
+                        if let Some((_span, token)) = tokens.get(i) {
+                            id = Some(match token {
+                                Token::TypeID(t) => TypeId::from(*t),
+                                Token::Str(s) => TypeId::from(ctx.2.id(s).unwrap()),
+                                t => panic!("{t:?}"),
+                            });
+                        }
+                        i += 1;
+                        if let Some((_span, token)) = tokens.get(i)
+                            && token == &Token::RightBracket
+                        {
+                            match &mut decl.args {
+                                Some(args) => {
+                                    args.push((
+                                        mutable,
+                                        found_arg.unwrap(),
+                                        TypeId {
+                                            id: id.unwrap().id,
+                                            array: true,
+                                        },
+                                    ));
+                                }
+                                None => {
+                                    decl.args = Some(vec![(
+                                        mutable,
+                                        found_arg.unwrap(),
+                                        TypeId {
+                                            id: id.unwrap().id,
+                                            array: true,
+                                        },
+                                    )]);
+                                }
+                            }
+                        }
+                    }
+                    Token::RightParen => state = State::ReturnType,
+                    Token::Comma => state = State::Arg,
+                    t => panic!("{t:?} {decl:?}"),
+                },
+                State::ReturnType => match token {
+                    Token::TypeID(t) => decl.return_type = Some(TypeId::from(*t)),
+                    Token::LeftAngleBracket => {
+                        let (block, inc) = Block::parse_ctx_mut(ctx, &tokens[i..])?;
                         decl.block = block;
                         return Ok((decl, i + inc));
                     }
@@ -1066,8 +1522,88 @@ impl<'a> FunctionDecl<'a> {
 }
 
 impl<'a> FunctionCall<'a> {
-    // #[instrument(name = "FunctionCall::parse_ctx", skip_all, err)]
-    pub fn parse_ctx(ctx: &Ast, tokens: &[(Span, Token<'a>)]) -> ParseResult<(Self, usize)> {
+    #[instrument(name = "FunctionCall::parse_ctx", skip_all, err)]
+    pub fn parse_ctx(
+        ctx: (
+            &FunctionDecl<'a>,
+            Option<&[(usize, BlockValue<'a>)]>,
+            &Typer<'a>,
+        ),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Self, usize)> {
+        #[derive(Debug)]
+        enum State {
+            Name,
+            Arg,
+            FnEnd,
+        }
+        let mut fn_name: Option<&str> = None;
+        let mut args: Vec<Value> = vec![];
+        let mut state = State::Name;
+        let mut needs_comma = false;
+
+        for (i, (_span, token)) in tokens.iter().enumerate() {
+            match state {
+                State::Name => match token {
+                    Token::Str(s) => {
+                        assert!(fn_name.is_none());
+                        fn_name = Some(s);
+                    }
+                    Token::LeftParen => state = State::Arg,
+                    t => panic!("{t:?}"),
+                },
+                State::Arg => match token {
+                    Token::Number(_s) | Token::QuotedString(_s) => {
+                        assert!(!needs_comma);
+                        let (val, _idx) = Primitive::parse(&tokens[i..])?;
+                        args.push(Value::Primitive(val));
+                        needs_comma = true;
+                    }
+                    Token::Comma => needs_comma = false,
+                    Token::Str(_s) => {
+                        for (_lvl, val) in ctx.1.as_ref().unwrap().iter() {
+                            if let BlockValue::VariableDecl((var_name, var)) = val
+                                && var_name == _s
+                            {
+                                match &var.val {
+                                    VariableValue::Value(value) => args.push(value.clone()),
+                                    _ => panic!(),
+                                }
+                            }
+                        }
+                    }
+                    Token::RightParen => state = State::FnEnd,
+                    t => panic!("{t:?}"),
+                },
+                State::FnEnd => match token {
+                    Token::Semicolon => {
+                        for (idx, (_, _, id)) in ctx.0.args.as_ref().unwrap().iter().enumerate() {
+                            if args[idx].id(Some(ctx.2)).unwrap().id != id.id {
+                                return Err(ParseError::IncorrectType);
+                            }
+                        }
+                        return Ok((
+                            FunctionCall {
+                                name: fn_name.unwrap(),
+                                args,
+                                return_type: ctx.0.return_type,
+                            },
+                            i.saturating_sub(1),
+                        ));
+                    }
+                    t => panic!("{t:?}"),
+                },
+            }
+        }
+
+        panic!()
+    }
+
+    #[instrument(name = "FunctionCall::parse_ctx_mut", skip(ctx, tokens), ret)]
+    pub fn parse_ctx_mut(
+        ctx: &(&FunctionDecl<'a>, &[(usize, BlockValue<'a>)], &Typer<'a>),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(Self, usize)> {
         #[derive(Debug)]
         enum State {
             Name,
@@ -1103,25 +1639,18 @@ impl<'a> FunctionCall<'a> {
                 },
                 State::FnEnd => match token {
                     Token::Semicolon => {
-                        for node in ctx.nodes() {
-                            if let AstNode::Function(function_decl) = node
-                                && function_decl.name == fn_name.unwrap()
-                            {
-                                return Ok((
-                                    FunctionCall {
-                                        name: fn_name.unwrap(),
-                                        args,
-                                        return_type: function_decl.return_type,
-                                    },
-                                    i,
-                                ));
+                        if let Some(f_args) = &ctx.0.args {
+                            for (i, (_, _, id)) in f_args.iter().enumerate() {
+                                if args[i].id(Some(ctx.2)).unwrap().id != id.id {
+                                    return Err(ParseError::IncorrectType);
+                                }
                             }
                         }
                         return Ok((
                             FunctionCall {
                                 name: fn_name.unwrap(),
                                 args,
-                                return_type: None,
+                                return_type: ctx.0.return_type,
                             },
                             i,
                         ));
@@ -1136,9 +1665,9 @@ impl<'a> FunctionCall<'a> {
 }
 
 impl TypeDecl {
-    // #[instrument(name = "TypeDecl::parse_ctx_mut", skip_all, err)]
+    #[instrument(name = "TypeDecl::parse_ctx_mut", skip_all, err)]
     pub fn parse_ctx_mut<'a>(
-        ctx: &mut Typer<'a>,
+        ctx: (&Ast<'a>, &[(usize, BlockValue<'a>)], &mut Typer<'a>),
         tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(Option<&'a str>, TypeDeclReturn<'a>, usize)> {
         let mut start = 0;
@@ -1150,13 +1679,13 @@ impl TypeDecl {
         };
         match tokens[start] {
             (_, Token::Function) => {
-                let (mut decl, i) = FunctionDecl::parse_ctx(ctx, tokens)?;
+                let (mut decl, i) = FunctionDecl::parse_ctx_mut(ctx, tokens)?;
                 decl.visibility = vis;
 
                 Ok((None, TypeDeclReturn::Function(decl), i))
             }
             (_, Token::Struct) => {
-                let (name, mut decl, i) = StructDecl::parse_ctx_mut(ctx, tokens)?;
+                let (name, mut decl, i) = StructDecl::parse_ctx_mut(ctx.2, tokens)?;
                 decl.visibility = vis;
 
                 Ok((Some(name), TypeDeclReturn::Struct(decl), i))
@@ -1173,15 +1702,20 @@ impl TypeDecl {
 }
 
 impl<'a> VariableValue<'a> {
-    // #[instrument(name = "VariableValue::parse_ctx", skip_all)]
+    #[instrument(name = "VariableValue::parse_ctx", skip_all)]
     pub fn parse_ctx(
-        ctx: &(Option<TypeID>, &Typer<'a>),
+        ctx: &(
+            Option<TypeId>,
+            &Ast<'a>,
+            Option<&[(usize, BlockValue<'a>)]>,
+            &Typer<'a>,
+        ),
         tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(Self, usize)> {
         let value: VariableValue;
 
         let type_id = &ctx.0;
-        let typer = &ctx.1;
+        let typer = &ctx.3;
         let mut i = 0;
 
         loop {
@@ -1191,6 +1725,32 @@ impl<'a> VariableValue<'a> {
 
             match token {
                 Token::Str(s) => {
+                    if let Some((_span, token)) = tokens.get(i + 1)
+                        && *token == Token::LeftParen
+                    {
+                        let decl = ctx.1.nodes().iter().rfind(|n| match n {
+                            AstNode::Function(function_decl) => function_decl.name == *s,
+                            _ => false,
+                        });
+                        match decl.unwrap() {
+                            AstNode::Function(function_decl) => {
+                                let (call, inc) = FunctionCall::parse_ctx(
+                                    (function_decl, Some(ctx.2.unwrap()), ctx.3),
+                                    &tokens[i..],
+                                )
+                                .unwrap();
+
+                                if call.return_type.is_none() {
+                                    return Err(ParseError::IncorrectType);
+                                }
+
+                                i += inc;
+
+                                return Ok((VariableValue::FunctionCall(call), i));
+                            }
+                            _ => panic!(),
+                        }
+                    }
                     if let Some(typ) = typer.get(s) {
                         match typ {
                             ComplexType::Known(complex_type_decl) => match complex_type_decl {
@@ -1203,7 +1763,7 @@ impl<'a> VariableValue<'a> {
                                     return Ok((value, i));
                                 }
                                 ComplexTypeDecl::Enum(_enum_decl) => {
-                                    let (decl, inc) = Enum::parse_ctx(ctx.1, &tokens[i..])?;
+                                    let (decl, inc) = Enum::parse_ctx(*typer, &tokens[i..])?;
                                     i += inc;
                                     error!(?decl, "{:?}", &tokens[i..]);
                                     value = VariableValue::Value(Value::Complex(
@@ -1261,13 +1821,16 @@ impl<'a> VariableValue<'a> {
                             Some((_, Token::RightBracket)) => {
                                 return Ok((
                                     VariableValue::Value(Value::Array(Array {
-                                        type_id: vec[0].id(Some(ctx.1)).unwrap(),
+                                        type_id: TypeId {
+                                            id: vec[0].id(Some(*typer)).unwrap().id,
+                                            array: true,
+                                        },
                                         values: vec,
                                     })),
                                     i + 1,
                                 ));
                             }
-                            Some((_, Token::Comma)) | Some((_, Token::RightAngleBracket)) => {
+                            Some((_, Token::Comma | Token::RightAngleBracket)) => {
                                 i += 1;
                             }
                             Some((_, _)) => {
@@ -1294,11 +1857,11 @@ impl<'a> VariableValue<'a> {
 }
 
 impl<'a> Variable<'a> {
-    // #[instrument(name = "Variable::parse_ctx", skip_all, ret)]
+    #[instrument(name = "Variable::parse_ctx", skip_all, ret)]
     pub fn parse_ctx(
-        ctx: &Typer<'a>,
+        ctx: &(&Ast<'a>, &[(usize, BlockValue<'a>)], &Typer<'a>),
         tokens: &[(Span, Token<'a>)],
-    ) -> ParseResult<(&'a str, bool, Option<TypeID>, VariableValue<'a>, usize)> {
+    ) -> ParseResult<(&'a str, bool, Option<TypeId>, VariableValue<'a>, usize)> {
         enum VariableState {
             Let,
             Name,
@@ -1310,7 +1873,7 @@ impl<'a> Variable<'a> {
         let mut state = VariableState::Let;
         let mut name = None;
         let mut mutable = false;
-        let mut type_id: Option<TypeID> = None;
+        let mut type_id: Option<TypeId> = None;
         let mut value: Option<VariableValue> = None;
         let mut i = 0;
 
@@ -1332,7 +1895,7 @@ impl<'a> Variable<'a> {
                 },
                 VariableState::Type => match token {
                     Token::TypeID(id) => {
-                        type_id = Some(TypeID::from(*id));
+                        type_id = Some(TypeId::from(*id));
                     }
                     Token::Equal => state = VariableState::Value,
                     t => panic!("{t:?}"),
@@ -1344,7 +1907,82 @@ impl<'a> Variable<'a> {
                         VariableValueReturn::Assignment(variable_value)
                         | VariableValueReturn::ReAssignment(variable_value) => Some(variable_value),
                         VariableValueReturn::Expr(math_items) => {
-                            type_id = Some(TypeID::Primitive(match &math_items[0] {
+                            type_id = Some(TypeId::from(match &math_items[0] {
+                                MathItem::Prim(primitive) => primitive.id(),
+                                MathItem::Op(_operation) => todo!(),
+                            }));
+                            Some(VariableValue::Expr(math_items))
+                        }
+                    };
+                    state = VariableState::Semicolon;
+                    // continue because without it, we finish the loop incrementing i but we are on
+                    // the semicolon
+                    continue;
+                }
+                VariableState::Semicolon => match token {
+                    Token::Semicolon => {
+                        return Ok((name.unwrap(), mutable, type_id, value.unwrap(), i));
+                    }
+                    _ => panic!("{token} {name:?} {value:?} {:?}", &tokens[i..]),
+                },
+            }
+            i += 1;
+        }
+
+        panic!()
+    }
+
+    #[instrument(name = "Variable::parse_ctx_mut", skip_all, ret)]
+    pub fn parse_ctx_mut(
+        ctx: &(&Ast<'a>, &[(usize, BlockValue<'a>)], &mut Typer<'a>),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(&'a str, bool, Option<TypeId>, VariableValue<'a>, usize)> {
+        enum VariableState {
+            Let,
+            Name,
+            Type,
+            Value,
+            Semicolon,
+        }
+
+        let mut state = VariableState::Let;
+        let mut name = None;
+        let mut mutable = false;
+        let mut type_id: Option<TypeId> = None;
+        let mut value: Option<VariableValue> = None;
+        let mut i = 0;
+
+        while let Some((_span, token)) = tokens.get(i) {
+            match state {
+                VariableState::Let => match token {
+                    Token::Let => state = VariableState::Name,
+                    _ => panic!(),
+                },
+                VariableState::Name => match token {
+                    Token::Mutable => mutable = true,
+                    Token::Str(s) => {
+                        assert!(name.is_none());
+                        name = Some(s);
+                    }
+                    Token::Equal => state = VariableState::Value,
+                    Token::Colon => state = VariableState::Type,
+                    t => panic!("{t:?}"),
+                },
+                VariableState::Type => match token {
+                    Token::TypeID(id) => {
+                        type_id = Some(TypeId::from(*id));
+                    }
+                    Token::Equal => state = VariableState::Value,
+                    t => panic!("{t:?}"),
+                },
+                VariableState::Value => {
+                    let (left, inc) = VariableUse::parse_ctx_mut(ctx, &tokens[i..])?;
+                    i += inc;
+                    value = match left {
+                        VariableValueReturn::Assignment(variable_value)
+                        | VariableValueReturn::ReAssignment(variable_value) => Some(variable_value),
+                        VariableValueReturn::Expr(math_items) => {
+                            type_id = Some(TypeId::from(match &math_items[0] {
                                 MathItem::Prim(primitive) => primitive.id(),
                                 MathItem::Op(_operation) => todo!(),
                             }));
@@ -1371,7 +2009,7 @@ impl<'a> Variable<'a> {
 }
 
 impl<'a> MathExpr {
-    // #[instrument(name = "MathExpr::parse", skip_all, err)]
+    #[instrument(name = "MathExpr::parse", skip_all, err)]
     pub fn parse(tokens: &[(Span, Token<'a>)]) -> ParseResult<(Vec<MathItem<'a>>, usize)> {
         let mut i = 0;
         let mut items = vec![];
@@ -1396,9 +2034,9 @@ impl<'a> MathExpr {
 }
 
 impl VariableUse {
-    // #[instrument(name = "VariableUse::parse_ctx", skip_all, ret)]
+    #[instrument(name = "VariableUse::parse_ctx", skip_all, ret)]
     pub fn parse_ctx<'a>(
-        _ctx: &Typer<'a>,
+        _ctx: &(&Ast<'a>, &[(usize, BlockValue<'a>)], &Typer<'a>),
         tokens: &[(Span, Token<'a>)],
     ) -> ParseResult<(VariableValueReturn<'a>, usize)> {
         #[derive(Debug)]
@@ -1503,8 +2141,10 @@ impl VariableUse {
                             return Ok((VariableValueReturn::Assignment(prim), i + 1));
                         }
                         (Token::Str(_s), Some((_span, Token::Equal))) => {
-                            let (val, inc) =
-                                VariableValue::parse_ctx(&(None, _ctx), &tokens[i + 2..])?;
+                            let (val, inc) = VariableValue::parse_ctx(
+                                &(None, _ctx.0, Some(_ctx.1), _ctx.2),
+                                &tokens[i + 2..],
+                            )?;
                             // [Token::Str(_), Token::Equal, Val, Token::Semicolon];
                             // ^ start         ^ end         ^ goal
                             // so we do i += inc + 2;
@@ -1512,7 +2152,10 @@ impl VariableUse {
                             return Ok((VariableValueReturn::Assignment(val), i));
                         }
                         (Token::Str(_s), _) => {
-                            let (val, inc) = VariableValue::parse_ctx(&(None, _ctx), &tokens[i..])?;
+                            let (val, inc) = VariableValue::parse_ctx(
+                                &(None, _ctx.0, Some(_ctx.1), _ctx.2),
+                                &tokens[i..],
+                            )?;
                             // [Token::Str(_), Token::Equal, Val, Token::Semicolon];
                             // ^ start         ^ end         ^ goal
                             // so we do i += inc + 2;
@@ -1548,7 +2191,187 @@ impl VariableUse {
                             ));
                         }
                         (Token::LeftBracket, Some((_span, _t))) => {
-                            let (val, inc) = VariableValue::parse_ctx(&(None, _ctx), &tokens[i..])?;
+                            let (val, inc) = VariableValue::parse_ctx(
+                                &(None, _ctx.0, Some(_ctx.1), _ctx.2),
+                                &tokens[i..],
+                            )?;
+                            i += inc;
+                            return Ok((VariableValueReturn::Assignment(val), i));
+                        }
+
+                        t => {
+                            panic!("{t:?} {op:?}");
+                        }
+                    }
+                    state = State::Name;
+                }
+            }
+        }
+
+        Err(ParseError::IncorrectType)
+    }
+
+    #[instrument(name = "VariableUse::parse_ctx_mut", skip_all, ret)]
+    pub fn parse_ctx_mut<'a>(
+        _ctx: &(&Ast<'a>, &[(usize, BlockValue<'a>)], &mut Typer<'a>),
+        tokens: &[(Span, Token<'a>)],
+    ) -> ParseResult<(VariableValueReturn<'a>, usize)> {
+        #[derive(Debug)]
+        enum State {
+            Name,
+            Operator,
+        }
+
+        let mut state = State::Operator;
+
+        let mut name = None;
+        let mut op = Some(Operation::Assign);
+        let mut value = None;
+        let mut i = 0;
+
+        while let Some((span, tok)) = tokens.get(i) {
+            match state {
+                State::Name => match tok {
+                    Token::Str(s) => {
+                        if name.is_none() {
+                            name = Some(VariableValue::Name(s));
+                        } else {
+                            assert!(value.is_none());
+                            value = Some(VariableValue::Name(s));
+                        }
+                        println!("{name:?} {value:?}");
+                        state = State::Operator;
+                        i += 1;
+                    }
+                    Token::Number(_n) => {
+                        let prim = VariableValue::Value(Value::Primitive(
+                            Primitive::parse(&[(*span, *tok)])?.0,
+                        ));
+
+                        if name.is_none() {
+                            name = Some(prim);
+                        } else {
+                            assert!(value.is_none());
+                            value = Some(prim);
+                        }
+
+                        state = State::Operator;
+                        i += 1;
+                    }
+                    Token::Dot => {
+                        panic!();
+                    }
+                    Token::Semicolon => {
+                        return Ok((VariableValueReturn::Assignment(name.unwrap()), i));
+                    }
+                    t => panic!("{t:?} {tokens:?}"),
+                },
+                State::Operator => {
+                    match (tok, tokens.get(i + 1)) {
+                        (Token::Equal, _) => {
+                            op = Some(Operation::Assign);
+                            i += 1;
+                        }
+                        // (Token::Plus, Some(Token::Equal)) => {
+                        //     op = Some(Operation::AddAssign);
+                        //     i += 2;
+                        // }
+                        // (Token::Minus, Some(Token::Equal)) => {
+                        //     op = Some(Operation::SubAssign);
+                        //     i += 2;
+                        // }
+                        // (Token::Multiply, Some(Token::Equal)) => {
+                        //     op = Some(Operation::MultAssign);
+                        //     i += 2;
+                        // }
+                        // (Token::Divide, Some(Token::Equal)) => {
+                        //     op = Some(Operation::DivAssign);
+                        //     i += 2;
+                        // }
+                        // (Token::Plus, _) => {
+                        //     op = Some(Operation::Add);
+                        //     i += 1;
+                        // }
+                        // (Token::Minus, _) => {
+                        //     op = Some(Operation::Sub);
+                        //     i += 1;
+                        // }
+                        // (Token::Multiply, _) => {
+                        //     op = Some(Operation::Mult);
+                        //     i += 1;
+                        // }
+                        // (Token::Divide, _) => {
+                        //     op = Some(Operation::Div);
+                        //     i += 1;
+                        // }
+                        (Token::Exclamation, Some((_span, Token::Equal))) => {
+                            todo!("should this lang support things like let foo = bar != baz")
+                        }
+                        (
+                            Token::Number(_n) | Token::QuotedString(_n),
+                            Some((span, Token::Semicolon)),
+                        ) => {
+                            assert_eq!(op.unwrap(), Operation::Assign);
+                            let prim = VariableValue::Value(Value::Primitive(
+                                Primitive::parse(&[(*span, *tok)])?.0,
+                            ));
+                            return Ok((VariableValueReturn::Assignment(prim), i + 1));
+                        }
+                        (Token::Str(_s), Some((_span, Token::Equal))) => {
+                            let (val, inc) = VariableValue::parse_ctx(
+                                &(None, _ctx.0, Some(_ctx.1), _ctx.2),
+                                &tokens[i + 2..],
+                            )?;
+                            // [Token::Str(_), Token::Equal, Val, Token::Semicolon];
+                            // ^ start         ^ end         ^ goal
+                            // so we do i += inc + 2;
+                            i += inc + 2;
+                            return Ok((VariableValueReturn::Assignment(val), i));
+                        }
+                        (Token::Str(_s), _) => {
+                            let (val, inc) = VariableValue::parse_ctx(
+                                &(None, _ctx.0, Some(_ctx.1), _ctx.2),
+                                &tokens[i..],
+                            )?;
+                            // [Token::Str(_), Token::Equal, Val, Token::Semicolon];
+                            // ^ start         ^ end         ^ goal
+                            // so we do i += inc + 2;
+                            i += inc + 1;
+                            return Ok((VariableValueReturn::Assignment(val), i));
+                        }
+                        (
+                            Token::Number(_n),
+                            Some((
+                                _span,
+                                Token::Plus | Token::Minus | Token::Multiply | Token::Divide,
+                            )),
+                        ) => {
+                            let (val, inc) = MathExpr::parse(&tokens[i..])?;
+                            return Ok((VariableValueReturn::Expr(val), i + inc + 1));
+                        }
+                        (Token::True, Some((_span, Token::Semicolon))) => {
+                            assert_eq!(op.unwrap(), Operation::Assign);
+                            return Ok((
+                                VariableValueReturn::Assignment(VariableValue::Value(
+                                    Value::Primitive(Primitive::Bool(true)),
+                                )),
+                                i + 1,
+                            ));
+                        }
+                        (Token::False, Some((_span, Token::Semicolon))) => {
+                            assert_eq!(op.unwrap(), Operation::Assign);
+                            return Ok((
+                                VariableValueReturn::Assignment(VariableValue::Value(
+                                    Value::Primitive(Primitive::Bool(false)),
+                                )),
+                                i + 1,
+                            ));
+                        }
+                        (Token::LeftBracket, Some((_span, _t))) => {
+                            let (val, inc) = VariableValue::parse_ctx(
+                                &(None, _ctx.0, Some(_ctx.1), _ctx.2),
+                                &tokens[i..],
+                            )?;
                             i += inc;
                             return Ok((VariableValueReturn::Assignment(val), i));
                         }
@@ -1579,7 +2402,7 @@ mod parseable {
     use crate::types::{
         BlockValue, ComplexType, ComplexTypeDecl, ComplexTypeID, ComplexTypeName, ComplexValue,
         Enum, EnumDecl, FunctionCall, MathItem, Number, Operation, Primitive, PrimitiveID, Struct,
-        StructDecl, TypeID, Value, Variable, VariableValue, Visibility,
+        StructDecl, TypeId, Value, Variable, VariableValue, Visibility,
     };
 
     use tokenizer::Tokenizer;
@@ -1741,7 +2564,7 @@ mod parseable {
             parser.typer.get("Foo").unwrap(),
             &ComplexType::Known(ComplexTypeDecl::StructDecl(StructDecl {
                 visibility: Visibility::Pub,
-                fields: HashMap::from([("i", TypeID::Primitive(PrimitiveID::I32))])
+                fields: HashMap::from([("i", TypeId::from(PrimitiveID::I32))])
             }))
         );
         Ok(())
@@ -1771,10 +2594,7 @@ mod parseable {
             && let ComplexTypeDecl::StructDecl(struct_decl) = complex_type_decl
         {
             for val in struct_decl.fields.values() {
-                let TypeID::Complex(complex_type_id) = val else {
-                    panic!()
-                };
-                match parser.typer.get_id(*complex_type_id).unwrap() {
+                match parser.typer.get_id(val.as_complex()).unwrap() {
                     crate::types::ComplexType::Known(complex_type_decl) => {
                         match complex_type_decl {
                             ComplexTypeDecl::StructDecl(struct_decl) => {
@@ -1951,7 +2771,7 @@ mod parseable {
             BlockValue::VariableDecl((
                 "bar",
                 Variable {
-                    typeid: TypeID::Complex(ComplexTypeID::new(0)),
+                    typeid: TypeId::from(ComplexTypeID::new(0)),
                     mutable: false,
                     val: VariableValue::Value(Value::Complex(ComplexValue::Struct(Struct {
                         name: ComplexTypeName::Known("BarBaz"),
@@ -2012,7 +2832,7 @@ mod parseable {
             &(
                 "bar",
                 Variable {
-                    typeid: TypeID::Complex(parser.typer.id("Foo").unwrap()),
+                    typeid: TypeId::from(parser.typer.id("Foo").unwrap()),
                     mutable: false,
                     val: VariableValue::Value(Value::Complex(ComplexValue::Struct(Struct {
                         name: ComplexTypeName::Known("Foo"),
@@ -2228,7 +3048,7 @@ mod parseable {
             &(
                 "foo",
                 Variable {
-                    typeid: TypeID::Primitive(PrimitiveID::I64),
+                    typeid: TypeId::from(PrimitiveID::I64),
                     mutable: true,
                     val: VariableValue::Expr(vec![
                         MathItem::Prim(Primitive::Number(Number::I64(0))),
@@ -2402,6 +3222,65 @@ mod parseable {
 
         let parser = Parser::parse(data).unwrap();
 
+        info!(?parser);
+    }
+
+    #[test]
+    fn fn_array_test() {
+        setup_logger();
+
+        let data = r#"
+        fn foo(t: [i32]) {}
+            "#;
+
+        let parser = Parser::parse(data).unwrap();
+
+        info!(?parser);
+    }
+
+    #[test]
+    fn simple_type_check() {
+        setup_logger();
+
+        let data = r#"
+    fn foo(i: i32) {}
+    fn bar() {
+        foo(0.0);
+    }
+    "#;
+
+        assert_eq!(
+            Parser::parse(data).is_err_and(|e| {
+                match e {
+                    ParseError::IncorrectType => true,
+                    t => false,
+                }
+            }),
+            true
+        );
+    }
+
+    #[test]
+    fn complex_type_check() {
+        setup_logger();
+
+        let data = r#"
+        struct Foo {
+        i: i64
+        }
+
+        fn foo(f: Foo) i64 {}
+
+        fn bar() {
+            let f = Foo {
+            i: 10
+            };
+
+            let b = foo(Foo {i: 10});
+        }
+            "#;
+
+        let parser = Parser::parse(data).unwrap();
         info!(?parser);
     }
 }
