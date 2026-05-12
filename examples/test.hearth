@@ -1,0 +1,10 @@
+struct Foo {
+i: u64
+}
+
+fn foo() {
+  let bar = Foo {i: 10};
+  let baz = Foo {i: 0};
+
+  let foo = bar.i - baz.i;
+}

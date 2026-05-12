@@ -708,6 +708,15 @@ pub enum Visibility {
     Pub,
 }
 
+impl Display for Visibility {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Visibility::Private => write!(f, "private"),
+            Visibility::Pub => write!(f, "pub"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy)]
 pub enum ComplexTypeName<'a> {
     Known(&'a str),
@@ -739,6 +748,23 @@ pub struct StructDecl<'a> {
     pub(crate) visibility: Visibility,
 
     pub(crate) fields: HashMap<&'a str, TypeId>,
+}
+
+impl Display for StructDecl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}{{", self.visibility);
+
+        for (i, (name, id)) in self.fields.iter().enumerate() {
+            if i < self.fields.len().saturating_sub(1) {
+                writeln!(f, "{name}: {id},")?;
+            } else {
+                writeln!(f, "{name}: {id}")?;
+                write!(f, "}}")?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -803,6 +829,23 @@ pub struct EnumDecl<'a> {
     pub(crate) visibility: Visibility,
 
     pub(crate) fields: HashMap<&'a str, Number>,
+}
+
+impl Display for EnumDecl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}{{", self.visibility);
+
+        for (i, (name, val)) in self.fields.iter().enumerate() {
+            if i < self.fields.len().saturating_sub(1) {
+                writeln!(f, "{name}: {val},")?;
+            } else {
+                writeln!(f, "{name}: {val}")?;
+                write!(f, "}}")?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -893,10 +936,34 @@ pub enum Condition {
     GreaterThanOrEqual,
 }
 
+impl Display for Condition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cond = match self {
+            Condition::Equal => "=",
+            Condition::NotEqual => "!=",
+            Condition::LessThan => "<",
+            Condition::GreaterThan => ">",
+            Condition::LessthanOrEqual => "<=",
+            Condition::GreaterThanOrEqual => ">=",
+        };
+
+        write!(f, "{cond}")
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ConditionItem<'a> {
     Item(VariableValue<'a>),
     Condition(Condition),
+}
+
+impl Display for ConditionItem<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConditionItem::Item(variable_value) => write!(f, "{variable_value} "),
+            ConditionItem::Condition(condition) => write!(f, "{condition}"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -904,9 +971,33 @@ pub struct IfStatement<'a> {
     pub(crate) cond: Vec<ConditionItem<'a>>,
 }
 
+impl Display for IfStatement<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(");
+        for cond in &self.cond {
+            write!(f, "{cond}");
+        }
+        write!(f, ")");
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct ElseIfStatement<'a> {
     pub(crate) cond: Vec<ConditionItem<'a>>,
+}
+
+impl Display for ElseIfStatement<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(");
+        for cond in &self.cond {
+            write!(f, "{cond}");
+        }
+        write!(f, ")");
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -956,6 +1047,21 @@ pub enum BlockValue<'a> {
     FunctionCall(FunctionCall<'a>),
 }
 
+impl Display for BlockValue<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlockValue::VariableDecl(decl) => write!(f, "let {} = {}", decl.0, decl.1),
+            BlockValue::VariableReAssignment(assgn) => write!(f, "{} = {}", assgn.0, assgn.1),
+            BlockValue::Return(variable_value) => write!(f, "return {variable_value}"),
+            BlockValue::IfStatement(if_statement) => write!(f, "{if_statement} {{"),
+            BlockValue::Else => write!(f, "else {{"),
+            BlockValue::ElseIf(else_if_statement) => write!(f, "{else_if_statement} {{"),
+            BlockValue::Block => write!(f, "{{"),
+            BlockValue::FunctionCall(function_call) => write!(f, "{function_call}"),
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionDecl<'a> {
     pub(crate) visibility: Visibility,
@@ -964,6 +1070,50 @@ pub struct FunctionDecl<'a> {
     pub(crate) return_type: Option<TypeId>,
 
     pub(crate) block: Vec<(usize, BlockValue<'a>)>,
+}
+
+impl Display for FunctionDecl<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.visibility, self.name)?;
+
+        write!(f, "(")?;
+        match self.args.as_ref() {
+            Some(args) => {
+                for arg in args {
+                    if arg.0 {
+                        write!(f, "mutable {}: {}, ", arg.1, arg.2)?;
+                    } else {
+                        write!(f, "{}: {}, ", arg.1, arg.2)?;
+                    }
+                }
+            }
+            None => write!(f, ") ")?,
+        }
+
+        self.return_type.is_some_and(|s| {
+            write!(f, "{s}");
+
+            false
+        });
+
+        writeln!(f, "{{");
+        let mut last_level = 0;
+
+        for (level, val) in &self.block {
+            if *level > last_level {
+                write!(f, "{{");
+            }
+            if *level < last_level {
+                write!(f, "}}");
+            }
+
+            writeln!(f, "{val}");
+        }
+
+        write!(f, "}}");
+
+        Ok(())
+    }
 }
 
 impl<'a> FunctionDecl<'a> {
@@ -1157,7 +1307,7 @@ pub struct StructAccess<'a> {
 
 impl Display for StructAccess<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.", self.name);
+        write!(f, "{}", self.name);
 
         for name in &self.fields {
             write!(f, ".{name}");
@@ -1198,8 +1348,11 @@ impl Display for VariableValue<'_> {
             VariableValue::Value(value) => write!(f, "{value}"),
             VariableValue::Name(name) => write!(f, "{name}"),
             VariableValue::Expr(math_items) => {
-                for expr in math_items {
-                    write!(f, "{expr},");
+                for (i, expr) in math_items.iter().enumerate() {
+                    match expr {
+                        MathItem::Prim(primitive) => write!(f, "{primitive} ")?,
+                        MathItem::Op(operation) => write!(f, "{operation} ")?,
+                    }
                 }
 
                 Ok(())

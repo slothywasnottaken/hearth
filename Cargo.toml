@@ -3,9 +3,9 @@ resolver = "2"
 members = [
   "parser",
   "tokenizer",
-  # "interpreter",
+  "interpreter",
 ]
-# default-members=["interpreter"]
+default-members=["interpreter"]
 
 [workspace.dependencies] 
 parser = { path = "./parser" }

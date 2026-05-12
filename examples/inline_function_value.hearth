@@ -1,0 +1,20 @@
+struct Foo {
+i: i64
+}
+
+enum Bar {
+  F,
+  B,
+}
+
+fn foo(foo: Foo, bar: Foo) Foo {
+  let f = Foo {i: 40};
+  return f;
+}
+
+fn baz(foo: Bar, bar: Bar) {}
+
+fn bar() {
+  baz(Bar::F, Bar::B);
+  let bar = foo(Foo {i: 10}, Foo{i: 0});
+}
